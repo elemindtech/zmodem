@@ -36,8 +36,6 @@ class ZModemCore {
 
   Iterable<ZModemEvent> receive(Uint8List data) sync* {
     _parser.addData(data);
-    // print('data: ${data.map((e) => e.toRadixString(16)).toList()}');
-
     while (_parser.moveNext()) {
       final packet = _parser.current;
       onTrace?.call('<- $packet');
@@ -104,7 +102,6 @@ class ZModemCore {
   }
 
    void positionFile([int offset = 0]) {
-      print('Position File $offset');
      _enqueue(ZModemHeader.rpos(offset));
      _state = _ZWaitingContentState(this);
     
@@ -273,28 +270,16 @@ class _ZWaitingContentState extends _ZModemState {
 
   @override
   ZModemEvent? handleDataSubpacket(ZModemDataPacket packet) {
-    print('_ZWaitingContentState type: ${packet.type}');
-    if (packet.type == consts.ZCRCG || 
-        packet.type == consts.ZCRCQ) {
-      //core._expectDataSubpacket();
-    }
-    return null;//ZFileDataEvent(packet.data, packet);
+    return null;
   }
 
   @override
   ZModemEvent? handleHeader(ZModemHeader header) {
     switch (header.type) {
-      // case consts.ZCRCG:
-      // case consts.ZCRCQ:
-      //   core._expectDataSubpacket();
-      //   return null;
       case consts.ZDATA:
-        print('Expecting ZDATA data subpacket');
         core._state = _ZReceivingContentState(core);
         core._expectDataSubpacket();
         return ZDataEvent(header.p3, header.p2, header.p1, header.p0);
-        //return null;
-
       default:
         return super.handleHeader(header);
     }
@@ -313,11 +298,6 @@ class _ZReceivingContentState extends _ZModemState {
         core._enqueue(ZModemHeader.rinit());
         core._state = _ZRinitState(core);
         return ZFileEndEvent();
-      // case consts.ZDATA:
-      //   print('Expecting ZDATA data subpacket');
-      //   //core._state = _ZReceivingContentState(core);
-      //   core._expectDataSubpacket();
-      //   return ZDataEvent(header.p3, header.p2, header.p1, header.p0);
       default:
         return super.handleHeader(header);
     }
@@ -325,7 +305,6 @@ class _ZReceivingContentState extends _ZModemState {
 
   @override
   ZModemEvent? handleDataSubpacket(ZModemDataPacket packet) {
-    print('_ZReceivingContentState type: ${packet.type}');
     if (packet.type == consts.ZCRCG || 
         packet.type == consts.ZCRCQ) {
       core._expectDataSubpacket();
