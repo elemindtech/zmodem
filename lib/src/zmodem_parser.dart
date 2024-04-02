@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:zmodem/src/buffer.dart';
 import 'package:zmodem/src/consts.dart' as consts;
 import 'package:zmodem/src/zmodem_frame.dart';
+import 'package:zmodem/src/crc.dart';
 
 class ZModemParser implements Iterator<ZModemPacket> {
   final _buffer = ChunkBuffer();
@@ -55,7 +56,6 @@ class ZModemParser implements Iterator<ZModemPacket> {
   /// and it's impossible to distinguish between plain text and a data subpacket
   /// without this prompt....
   void expectDataSubpacket() {
-    print('expectDataSubpacket');
     _expectDataSubpacket = true;
   }
 
@@ -77,7 +77,6 @@ class ZModemParser implements Iterator<ZModemPacket> {
       while (_buffer.length < 4) {
         yield null;
       }
-
       if (_buffer.peek() == consts.ZPAD) {
         if (_buffer.peek(1) == consts.ZPAD &&
             _buffer.peek(2) == consts.ZDLE &&
@@ -132,7 +131,8 @@ class ZModemParser implements Iterator<ZModemPacket> {
     }
 
     // Consume the optional CR before the LF.
-    if (_buffer.peek() == consts.CR) {
+    var next = _buffer.peek();
+    if (next == consts.CR || next == 0x8D) {
       _buffer.readByte();
 
       while (_buffer.isEmpty) {
@@ -172,7 +172,6 @@ class ZModemParser implements Iterator<ZModemPacket> {
 
     while (!_buffer.hasEscaped) yield null;
     final crc1 = _buffer.readEscaped()!;
-
     yield ZModemHeader(frameType, p0, p1, p2, p3);
   }
 
@@ -199,7 +198,8 @@ class ZModemParser implements Iterator<ZModemPacket> {
           final crc1 = _buffer.readEscaped();
 
           final type = char ^ consts.ZDLEESC;
-          yield ZModemDataPacket(type, buffer.takeBytes());
+          final payload = buffer.takeBytes();
+          yield ZModemDataPacket(type, payload,crc0!, crc1!);
           return;
         default:
           buffer.addByte(char);
