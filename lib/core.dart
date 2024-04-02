@@ -103,6 +103,18 @@ class ZModemCore {
     _state = _ZWaitingContentState(this);
   }
 
+   void positionFile([int offset = 0]) {
+      print('Position File $offset');
+     _enqueue(ZModemHeader.rpos(offset));
+     _state = _ZWaitingContentState(this);
+    
+  }
+
+  void ackFrame(int offset) {
+    _enqueue(ZModemHeader.ack(offset));
+  }
+
+
   void skipFile() {
     _requireState<_ZReceivedFileProposalState>();
     _enqueue(ZModemHeader.skip());
@@ -201,7 +213,8 @@ class _ZRinitState extends _ZModemState {
       case consts.ZFILE:
         core._state = _ZReceivedFileProposalState(core);
         core._expectDataSubpacket();
-        break;
+        return ZFileEvent(header.p0, header.p1, header.p2, header.p3);
+        //break;
       case consts.ZFIN:
         core._enqueue(ZModemHeader.fin());
         core._state = _ZFinState(core);
@@ -259,12 +272,29 @@ class _ZWaitingContentState extends _ZModemState {
   _ZWaitingContentState(super.core);
 
   @override
+  ZModemEvent? handleDataSubpacket(ZModemDataPacket packet) {
+    print('_ZWaitingContentState type: ${packet.type}');
+    if (packet.type == consts.ZCRCG || 
+        packet.type == consts.ZCRCQ) {
+      //core._expectDataSubpacket();
+    }
+    return null;//ZFileDataEvent(packet.data, packet);
+  }
+
+  @override
   ZModemEvent? handleHeader(ZModemHeader header) {
     switch (header.type) {
+      // case consts.ZCRCG:
+      // case consts.ZCRCQ:
+      //   core._expectDataSubpacket();
+      //   return null;
       case consts.ZDATA:
+        print('Expecting ZDATA data subpacket');
         core._state = _ZReceivingContentState(core);
         core._expectDataSubpacket();
-        return null;
+        return ZDataEvent(header.p3, header.p2, header.p1, header.p0);
+        //return null;
+
       default:
         return super.handleHeader(header);
     }
@@ -283,6 +313,11 @@ class _ZReceivingContentState extends _ZModemState {
         core._enqueue(ZModemHeader.rinit());
         core._state = _ZRinitState(core);
         return ZFileEndEvent();
+      // case consts.ZDATA:
+      //   print('Expecting ZDATA data subpacket');
+      //   //core._state = _ZReceivingContentState(core);
+      //   core._expectDataSubpacket();
+      //   return ZDataEvent(header.p3, header.p2, header.p1, header.p0);
       default:
         return super.handleHeader(header);
     }
@@ -290,10 +325,12 @@ class _ZReceivingContentState extends _ZModemState {
 
   @override
   ZModemEvent? handleDataSubpacket(ZModemDataPacket packet) {
-    if (packet.type == consts.ZCRCG || packet.type == consts.ZCRCQ) {
+    print('_ZReceivingContentState type: ${packet.type}');
+    if (packet.type == consts.ZCRCG || 
+        packet.type == consts.ZCRCQ) {
       core._expectDataSubpacket();
     }
-    return ZFileDataEvent(packet.data);
+    return ZFileDataEvent(packet.data, packet);
   }
 }
 
