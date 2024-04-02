@@ -60,8 +60,8 @@ class ZModemHeader implements ZModemPacket {
     return ZModemHeader(consts.ZRINIT, 0, 0, 0, consts.CANFDX | consts.CANOVIO);
   }
 
-  factory ZModemHeader.ack() {
-    return ZModemHeader(consts.ZACK, 0, 0, 0, 0);
+  factory ZModemHeader.ack([int offset = 0]) {
+    return ZModemHeader._littleEndian(consts.ZACK, offset);
   }
 
   factory ZModemHeader.rpos(int offset) {
@@ -150,11 +150,14 @@ class ZModemHeader implements ZModemPacket {
 
 class ZModemDataPacket implements ZModemPacket {
   @override
-  final int type;
-
   final Uint8List data;
+  final int type;
+  final int crc0;
+  final int crc1;
 
-  ZModemDataPacket(this.type, this.data);
+  ZModemDataPacket(this.type, this.data, [this.crc0=0, this.crc1=0]);
+
+  
 
   factory ZModemDataPacket.fileInfo(ZModemFileInfo fileInfo) {
     final buffer = BytesBuilder();
