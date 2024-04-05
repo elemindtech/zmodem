@@ -69,8 +69,6 @@ class ZModemParser implements Iterator<ZModemPacket> {
   /// yields a [ZModemPacket] when a packet is parsed.
   Iterable<ZModemPacket?> _createParser() sync* {
     while (true) {
-
-      print("AA");
       if (_expectDataSubpacket) {
         _expectDataSubpacket = false;
         yield* _parseDataSubpacket();
@@ -183,7 +181,6 @@ class ZModemParser implements Iterator<ZModemPacket> {
     final headerParser = ZModemHeaderParser();
 
     while (true) {
-      print('BB');
       final char = _buffer.readEscaped();
 
       if (char == null) {
