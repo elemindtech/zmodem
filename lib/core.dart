@@ -13,9 +13,11 @@ typedef ZModemTraceHandler = void Function(String message);
 
 typedef ZModemTextHandler = void Function(int char);
 
+typedef ZModemExceptionHandler = void Function<T extends ZModemState>(ZModemState state);
+
 /// Contains the state of a ZModem session.
 class ZModemCore {
-  ZModemCore({this.onTrace, this.onPlainText});
+  ZModemCore({this.onTrace, this.onException, this.onPlainText});
 
   late final _parser = ZModemParser()..onPlainText = onPlainText;
 
@@ -24,7 +26,7 @@ class ZModemCore {
   // ignore: unused_field
   Uint8List? _attnSequence;
 
-  late _ZModemState _state = _ZInitState(this);
+  late ZModemState _state = _ZInitState(this);
 
   bool get isFinished => _state is _ZFinState;
 
@@ -33,6 +35,18 @@ class ZModemCore {
   final ZModemTraceHandler? onTrace;
 
   final ZModemTextHandler? onPlainText;
+
+  final ZModemExceptionHandler? onException;
+
+  requireState<T extends ZModemState>() {
+    if (_state is! T) {
+      // throw ZModemException(
+      //   'Invalid state: ${_state.runtimeType}, expected: $T',
+      // );
+      onException?.call<T>(_state);
+    }
+     
+   }// onException?.call(T, _state);
 
   Iterable<ZModemEvent> receive(Uint8List data) sync* {
     _parser.addData(data);
@@ -62,11 +76,12 @@ class ZModemCore {
     _parser.expectDataSubpacket();
   }
 
-  void _requireState<T extends _ZModemState>() {
+  void _requireState<T extends ZModemState>() {
     if (_state is! T) {
       throw ZModemException(
         'Invalid state: ${_state.runtimeType}, expected: $T',
       );
+      //onException?.call<T>(_state);
     }
   }
 
@@ -160,23 +175,35 @@ class ZModemException implements Exception {
   String toString() => message;
 }
 
-abstract class _ZModemState {
-  _ZModemState(this.core);
+abstract class ZModemState {
+  ZModemState(this.core);
 
   final ZModemCore core;
 
   ZModemEvent? handleHeader(ZModemHeader header) {
-    throw ZModemException('Unexpected header: $header (state: $this)');
+    switch (header.type) {
+      case consts.ZRQINIT:
+        core._enqueue(ZModemHeader.rinit());
+        core._state = _ZRinitState(core);
+        return ZSessionRestartEvent();
+      default:
+        throw ZModemException('Unexpected header: $header (state: $this)');
+    }
+    
   }
 
   ZModemEvent? handleDataSubpacket(ZModemDataPacket packet) {
-    throw ZModemException('Unexpected data subpacket: $packet (state: $this)');
+    //throw ZModemException('Unexpected data subpacket: $packet (state: $this)');
+    core._enqueue(ZModemAbortSequence());
+    core._state = _ZInitState(core);
+    return ZSessionCancelEvent();
+    
   }
 }
 
 /// A state where no messages have been sent or received yet. Waiting for
 /// our or the other side to initiate the session.
-class _ZInitState extends _ZModemState {
+class _ZInitState extends ZModemState {
   _ZInitState(super.core);
 
   @override
@@ -196,7 +223,7 @@ class _ZInitState extends _ZModemState {
 }
 
 /// A state where we have requested a file transfer and waiting a file proposal.
-class _ZRinitState extends _ZModemState {
+class _ZRinitState extends ZModemState {
   _ZRinitState(super.core);
 
   @override
@@ -216,6 +243,7 @@ class _ZRinitState extends _ZModemState {
         core._enqueue(ZModemHeader.fin());
         core._state = _ZFinState(core);
         return ZSessionFinishedEvent();
+      
       default:
         return super.handleHeader(header);
     }
@@ -224,7 +252,7 @@ class _ZRinitState extends _ZModemState {
 }
 
 /// A state where the other side is going to send us the attn sequence.
-class _ZSinitState extends _ZModemState {
+class _ZSinitState extends ZModemState {
   _ZSinitState(super.core);
 
   @override
@@ -241,7 +269,7 @@ class _ZSinitState extends _ZModemState {
 
 /// A state where we've got a file proposal, but haven't decided whether to
 /// accept it or not.
-class _ZReceivedFileProposalState extends _ZModemState {
+class _ZReceivedFileProposalState extends ZModemState {
   _ZReceivedFileProposalState(super.core);
 
   @override
@@ -265,7 +293,7 @@ class _ZReceivedFileProposalState extends _ZModemState {
 
 /// A state where we've accepted a file proposal, but haven't received the ZDATA
 /// header yet.
-class _ZWaitingContentState extends _ZModemState {
+class _ZWaitingContentState extends ZModemState {
   _ZWaitingContentState(super.core);
 
   @override
@@ -288,7 +316,7 @@ class _ZWaitingContentState extends _ZModemState {
 
 /// A state where we've received the ZDATA header, and are receiving the file
 /// contents.
-class _ZReceivingContentState extends _ZModemState {
+class _ZReceivingContentState extends ZModemState {
   _ZReceivingContentState(super.core);
 
   @override
@@ -315,7 +343,7 @@ class _ZReceivingContentState extends _ZModemState {
 
 /// A state where we've requested the other side to receive a file from us, but
 /// haven't been notified that it's ready yet.
-class _ZRqinitState extends _ZModemState {
+class _ZRqinitState extends ZModemState {
   _ZRqinitState(super.core);
 
   @override
@@ -332,7 +360,7 @@ class _ZRqinitState extends _ZModemState {
 
 /// A state where the other side has notified us that it's ready to receive a
 /// file from us.
-class _ZReadyToSendState extends _ZModemState {
+class _ZReadyToSendState extends ZModemState {
   _ZReadyToSendState(super.core);
 
   @override
@@ -349,7 +377,7 @@ class _ZReadyToSendState extends _ZModemState {
 
 /// A state where we've sent a file proposal, but haven't received a response
 /// from the other side yet.
-class ZSentFileProposalState extends _ZModemState {
+class ZSentFileProposalState extends ZModemState {
   ZSentFileProposalState(super.core);
 
   @override
@@ -373,13 +401,13 @@ class ZSentFileProposalState extends _ZModemState {
 
 /// A state where we've sent the ZDATA header, and are sending chunks of file
 /// contents.
-class _ZSendingContentState extends _ZModemState {
+class _ZSendingContentState extends ZModemState {
   _ZSendingContentState(super.core);
 }
 
 /// A state where we as the sender have sent the ZFIN header, and are waiting
 /// for the other side to acknowledge it.
-class _ZClosedState extends _ZModemState {
+class _ZClosedState extends ZModemState {
   _ZClosedState(super.core);
 
   @override
@@ -395,6 +423,6 @@ class _ZClosedState extends _ZModemState {
 }
 
 /// A state where the session is fully closed.
-class _ZFinState extends _ZModemState {
+class _ZFinState extends ZModemState {
   _ZFinState(super.core);
 }

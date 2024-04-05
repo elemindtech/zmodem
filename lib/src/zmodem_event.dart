@@ -86,6 +86,24 @@ class ZReadyToSendEvent implements ZModemEvent {
   }
 }
 
+/// The event fired when the ZModem session receives an unexpected event
+/// from the sender and wants to cancel the current session.
+class ZSessionCancelEvent implements ZModemEvent {
+  @override
+  String toString() {
+    return 'ZSessionCancelEvent()';
+  }
+}
+
+/// The event fired when the ZModem session gets a ZRQINIT while
+/// in the middle of an active session (for example sender restarted)
+class ZSessionRestartEvent implements ZModemEvent {
+  @override
+  String toString() {
+    return 'ZSessionRestartEvent()';
+  }
+}
+
 /// The other side has accepted a file we just offered.
 class ZFileAcceptedEvent implements ZModemEvent {
   const ZFileAcceptedEvent(this.offset);

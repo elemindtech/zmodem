@@ -6,6 +6,7 @@ import 'package:zmodem/src/buffer.dart';
 import 'package:zmodem/src/consts.dart' as consts;
 import 'package:zmodem/src/zmodem_frame.dart';
 import 'package:zmodem/src/crc.dart';
+import 'package:zmodem/src/zmodem_header_parser.dart';
 
 class ZModemParser implements Iterator<ZModemPacket> {
   final _buffer = ChunkBuffer();
@@ -68,6 +69,8 @@ class ZModemParser implements Iterator<ZModemPacket> {
   /// yields a [ZModemPacket] when a packet is parsed.
   Iterable<ZModemPacket?> _createParser() sync* {
     while (true) {
+
+      print("AA");
       if (_expectDataSubpacket) {
         _expectDataSubpacket = false;
         yield* _parseDataSubpacket();
@@ -177,8 +180,10 @@ class ZModemParser implements Iterator<ZModemPacket> {
 
   Iterable<ZModemPacket?> _parseDataSubpacket() sync* {
     final buffer = BytesBuilder();
+    final headerParser = ZModemHeaderParser();
 
     while (true) {
+      print('BB');
       final char = _buffer.readEscaped();
 
       if (char == null) {
@@ -201,8 +206,24 @@ class ZModemParser implements Iterator<ZModemPacket> {
           final payload = buffer.takeBytes();
           yield ZModemDataPacket(type, payload,crc0!, crc1!);
           return;
+        case consts.ZHEX | consts.ZDLEESC: {
+          ZModemHeader? header = headerParser.processByte(consts.ZDLE);
+          headerParser.processByte(char ^ consts.ZDLEESC);
+
+          if(header != null) {
+            yield header;
+            return;
+          }
+          continue;
+        }
         default:
           buffer.addByte(char);
+          ZModemHeader? header = headerParser.processByte(char);
+          if(header != null) {
+            yield header;
+            return;
+          }
+
           continue;
       }
     }
@@ -258,6 +279,8 @@ extension _ChunkBufferExtensions on ChunkBuffer {
         return 0x7f;
       case consts.ZRUB1:
         return 0xff;
+      case consts.ZHEX:  
+        return byte | consts.ZDLEESC;
       default:
         return byte ^ 0x40;
     }

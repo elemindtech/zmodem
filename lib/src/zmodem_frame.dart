@@ -56,6 +56,10 @@ class ZModemHeader implements ZModemPacket {
     return ZModemHeader(consts.ZRQINIT, 0, 0, 0, 0);
   }
 
+  factory ZModemHeader.cancel() {
+    return ZModemHeader(consts.ZRQINIT, 0, 0, 0, 0);
+  }
+
   factory ZModemHeader.rinit() {
     return ZModemHeader(consts.ZRINIT, 0, 0, 0, consts.CANFDX | consts.CANOVIO);
   }
