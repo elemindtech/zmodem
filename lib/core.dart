@@ -126,6 +126,11 @@ class ZModemCore {
     _enqueue(ZModemHeader.ack(offset));
   }
 
+  void abortSession() {
+    _enqueue(ZModemAbortSequence());
+    _state = _ZInitState(this);
+  }
+
 
   void skipFile() {
     _requireState<_ZReceivedFileProposalState>();
