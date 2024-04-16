@@ -113,7 +113,7 @@ class ZModemParser implements Iterator<ZModemPacket> {
   Iterable<ZModemPacket?> _parseHexHeader() sync* {
     const asciiFields = 1 + 4 + 2;
     const headerLength = asciiFields * 2;
-
+    print('Parse header ${_buffer.length}, $headerLength');
     // Hex header has fixed length, so we can check the length before reading.
     while (_buffer.length < headerLength) {
       yield null;
@@ -127,7 +127,10 @@ class ZModemParser implements Iterator<ZModemPacket> {
     final crc0 = _buffer.readAsciiByte();
     final crc1 = _buffer.readAsciiByte();
 
+    print('Frame type $frameType');
+
     while (_buffer.isEmpty) {
+      print('header buffer is empty');
       yield null;
     }
 
@@ -142,7 +145,20 @@ class ZModemParser implements Iterator<ZModemPacket> {
     }
 
     // _buffer.expect(consts.LF);
-    _buffer.expect(0x8a);
+    next = _buffer.peek();
+
+    if(next != 0x8a && next != 0x0a) {
+      _buffer.expect(0x8a);
+    } else {
+      _buffer.readByte();
+    }
+
+    // Check for XON character,
+    next = _buffer.peek();
+
+    if(next == 0x11) {
+      _buffer.readByte();
+    } 
 
     yield ZModemHeader(frameType, p0, p1, p2, p3);
   }
