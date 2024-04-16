@@ -192,7 +192,12 @@ abstract class ZModemState {
         core._state = _ZRinitState(core);
         return ZSessionRestartEvent();
       default:
-        throw ZModemException('Unexpected header: $header (state: $this)');
+        // If we get any other unexpected message in any state, 
+        // send cancel to the sender. 
+        core._enqueue(ZModemAbortSequence());
+        core._state = _ZInitState(core);
+        return ZSessionCancelEvent();
+        //throw ZModemException('Unexpected header: $header (state: $this)');
     }
     
   }
@@ -328,6 +333,7 @@ class _ZReceivingContentState extends ZModemState {
   ZModemEvent? handleHeader(ZModemHeader header) {
     switch (header.type) {
       case consts.ZEOF:
+        print('GOT ZEOF');
         core._enqueue(ZModemHeader.rinit());
         core._state = _ZRinitState(core);
         return ZFileEndEvent();
@@ -338,8 +344,12 @@ class _ZReceivingContentState extends ZModemState {
 
   @override
   ZModemEvent? handleDataSubpacket(ZModemDataPacket packet) {
+    // If we got a ZCRCG or ZCRCQ here, expect another pone. This is because 
+    // we do not always get a ZDATA header with each frame, so need to expect 
+    // another subpacket.
     if (packet.type == consts.ZCRCG || 
         packet.type == consts.ZCRCQ) {
+      print('Expecting subpacket ${packet.type}');
       core._expectDataSubpacket();
     }
     return ZFileDataEvent(packet.data, packet);
