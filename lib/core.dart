@@ -29,6 +29,7 @@ class ZModemCore {
   late ZModemState _state = _ZInitState(this);
 
   bool get isFinished => _state is _ZFinState;
+  bool get isIdle => _state is _ZInitState;
 
   final maxDataSubpacketSize = 8192;
 
@@ -37,6 +38,9 @@ class ZModemCore {
   final ZModemTextHandler? onPlainText;
 
   final ZModemExceptionHandler? onException;
+
+
+
 
   requireState<T extends ZModemState>() {
     if (_state is! T) {
@@ -56,11 +60,15 @@ class ZModemCore {
 
       if (packet is ZModemHeader) {
         final event = _state.handleHeader(packet);
+        print ('Got header');
+        ZModemState.lastHeader = packet;
         if (event != null) {
+          print ('Yield header');
           yield event;
         }
       } else if (packet is ZModemDataPacket) {
         final event = _state.handleDataSubpacket(packet);
+        ZModemState.lastSubPacket = packet;
         if (event != null) {
           yield event;
         }
@@ -85,6 +93,15 @@ class ZModemCore {
     }
   }
 
+  bool _checkState<T extends ZModemState>() {
+    if (_state is! T) {
+      return false;
+      //onException?.call<T>(_state);
+    }
+    return true;
+  }
+
+
   bool get hasDataToSend => _sendQueue.isNotEmpty;
 
   Uint8List dataToSend() {
@@ -99,19 +116,28 @@ class ZModemCore {
   }
 
   void initiateSend() {
-    _requireState<_ZInitState>();
+    //_requireState<_ZInitState>();
+    if(!_checkState<_ZInitState>()) {
+      return;
+    }
     _enqueue(ZModemHeader.rqinit());
     _state = _ZRqinitState(this);
   }
 
   void initiateReceive() {
-    _requireState<_ZInitState>();
+    //_requireState<_ZInitState>();
+    if(!_checkState<_ZInitState>()) {
+      return;
+    }
     _enqueue(ZModemHeader.rinit());
     _state = _ZRinitState(this);
   }
 
   void acceptFile([int offset = 0]) {
-    _requireState<_ZReceivedFileProposalState>();
+    //_requireState<_ZReceivedFileProposalState>();
+    if(!_checkState<_ZReceivedFileProposalState>()) {
+      return;
+    }
     _enqueue(ZModemHeader.rpos(offset));
     _state = _ZWaitingContentState(this);
   }
@@ -133,20 +159,29 @@ class ZModemCore {
 
 
   void skipFile() {
-    _requireState<_ZReceivedFileProposalState>();
+    //_requireState<_ZReceivedFileProposalState>();
+    if(!_checkState<_ZReceivedFileProposalState>()) {
+      return;
+    }
     _enqueue(ZModemHeader.skip());
     _state = _ZRinitState(this);
   }
 
   void offerFile(ZModemFileInfo fileInfo) {
-    _requireState<_ZReadyToSendState>();
+    //_requireState<_ZReadyToSendState>();
+    if(!_checkState<_ZReadyToSendState>()) {
+      return;
+    }
     _enqueue(ZModemHeader.file());
     _enqueue(ZModemDataPacket.fileInfo(fileInfo));
     _state = ZSentFileProposalState(this);
   }
 
   void sendFileData(Uint8List data) {
-    _requireState<_ZSendingContentState>();
+    //_requireState<_ZSendingContentState>();
+    if(!_checkState<_ZSendingContentState>()) {
+      return;
+    }
 
     for (var i = 0; i < data.length; i += maxDataSubpacketSize) {
       final end = min(i + maxDataSubpacketSize, data.length);
@@ -155,7 +190,10 @@ class ZModemCore {
   }
 
   void finishSending(int offset) {
-    _requireState<_ZSendingContentState>();
+    //_requireState<_ZSendingContentState>();
+    if(!_checkState<_ZSendingContentState>()) {
+      return;
+    }
     _enqueue(ZModemDataPacket.fileData(Uint8List(0), eof: true));
     _enqueue(ZModemHeader.eof(offset));
     _state = _ZRqinitState(this);
@@ -184,14 +222,27 @@ abstract class ZModemState {
   ZModemState(this.core);
 
   final ZModemCore core;
+  static ZModemDataPacket? lastSubPacket;
+  static ZModemHeader? lastHeader;
+
+
 
   ZModemEvent? handleHeader(ZModemHeader header) {
+    
     switch (header.type) {
       case consts.ZRQINIT:
         core._enqueue(ZModemHeader.rinit());
         core._state = _ZRinitState(core);
         return ZSessionRestartEvent();
       default:
+        if( lastHeader != null && 
+          header.type == lastHeader?.type) 
+        {
+          // Ignore duplicates.
+          print("Ignore duplicate");
+          return null;
+        }
+       
         // If we get any other unexpected message in any state, 
         // send cancel to the sender. 
         core._enqueue(ZModemAbortSequence());
@@ -204,6 +255,16 @@ abstract class ZModemState {
 
   ZModemEvent? handleDataSubpacket(ZModemDataPacket packet) {
     //throw ZModemException('Unexpected data subpacket: $packet (state: $this)');
+
+    if( lastSubPacket != null && 
+        packet.type == lastSubPacket?.type &&
+        packet.crc0 == lastSubPacket?.crc0 &&
+        packet.crc1 == lastSubPacket?.crc1) 
+    {
+      // ignore duplicates.
+      return null;
+    }
+
     core._enqueue(ZModemAbortSequence());
     core._state = _ZInitState(core);
     return ZSessionCancelEvent();
