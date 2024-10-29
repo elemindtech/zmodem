@@ -41,21 +41,21 @@ abstract class HeaderState {
 
   void _enter() {
     if(doPrint) {
-      print('Enter $this');
+      //print('Enter $this');
     }
     count = 0;
   }
 
   void _exit() {
     if(doPrint) {
-      print('Exit $this');
+      //print('Exit $this');
     }
   }
 
   ZModemHeader? _processByte(int byte);
   _reset(int val) {
     if(doPrint) {
-      print('Reset $val');
+      //print('Reset $val');
     }
     _parser._header = -1;
     _parser._buffer = [];
@@ -130,7 +130,7 @@ class HexCrcState extends HeaderState {
             ..update(p3)
             ..update(type)
             ..finalize();
-        print('crc1: $crc1 crc2: $crc2  ourCrc: ${ourCrc.value}');
+        //print('crc1: $crc1 crc2: $crc2  ourCrc: ${ourCrc.value}');
         if(crc == ourCrc.value) {
           if(header == consts.ZHEX) {
             _parser._setState(_parser._footerState);
@@ -155,7 +155,7 @@ class FooterState extends HeaderState {
 
   @override
   ZModemHeader? _processByte(int byte) {
-    print("Footer Byte: $byte Length: ${buffer.length}");
+    //print("Footer Byte: $byte Length: ${buffer.length}");
     if(buffer.length == 11) {
       if((byte & 0xFF) == 0x8D || (byte & 0xFF) == 0x0D) {
         buffer.add(byte);

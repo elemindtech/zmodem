@@ -60,10 +60,10 @@ class ZModemCore {
 
       if (packet is ZModemHeader) {
         final event = _state.handleHeader(packet);
-        print ('Got header');
+        // Logger.d ('Got header');
         ZModemState.lastHeader = packet;
         if (event != null) {
-          print ('Yield header');
+          // Logger.d ('Yield header');
           yield event;
         }
       } else if (packet is ZModemDataPacket) {
@@ -239,7 +239,7 @@ abstract class ZModemState {
           header.type == lastHeader?.type) 
         {
           // Ignore duplicates.
-          print("Ignore duplicate");
+          //print("Ignore duplicate");
           return null;
         }
        
@@ -394,7 +394,7 @@ class _ZReceivingContentState extends ZModemState {
   ZModemEvent? handleHeader(ZModemHeader header) {
     switch (header.type) {
       case consts.ZEOF:
-        print('GOT ZEOF');
+        //print('GOT ZEOF');
         core._enqueue(ZModemHeader.rinit());
         core._state = _ZRinitState(core);
         return ZFileEndEvent();
@@ -410,7 +410,7 @@ class _ZReceivingContentState extends ZModemState {
     // another subpacket.
     if (packet.type == consts.ZCRCG || 
         packet.type == consts.ZCRCQ) {
-      print('Expecting subpacket ${packet.type}');
+      //print('Expecting subpacket ${packet.type}');
       core._expectDataSubpacket();
     }
     return ZFileDataEvent(packet.data, packet);

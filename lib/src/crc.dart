@@ -127,6 +127,6 @@ void main() {
     ..update(0x23)
     ..finalize();
 
-  print(crc.value.toRadixString(2));
-  print(crc.value.toRadixString(16));
+  //print(crc.value.toRadixString(2));
+  //print(crc.value.toRadixString(16));
 }
