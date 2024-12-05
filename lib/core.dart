@@ -157,6 +157,10 @@ class ZModemCore {
     _state = _ZInitState(this);
   }
 
+  void resetSession() {
+    _state = _ZInitState(this);
+  }
+
 
   void skipFile() {
     //_requireState<_ZReceivedFileProposalState>();
