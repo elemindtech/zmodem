@@ -78,6 +78,7 @@ class ZModemParser implements Iterator<ZModemPacket> {
       while (_buffer.length < 4) {
         yield null;
       }
+      //42, 42, 24, 88, 66, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 13,
       if (_buffer.peek() == consts.ZPAD) {
         if (_buffer.peek(1) == consts.ZPAD &&
             _buffer.peek(2) == consts.ZDLE &&
@@ -109,7 +110,7 @@ class ZModemParser implements Iterator<ZModemPacket> {
     }
     onPlainText?.call(byte);
   }
-
+//42, 42, 24, 88, 66, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 13,
   Iterable<ZModemPacket?> _parseHexHeader() sync* {
     const asciiFields = 1 + 4 + 2;
     const headerLength = asciiFields * 2;
@@ -219,24 +220,9 @@ class ZModemParser implements Iterator<ZModemPacket> {
           final payload = buffer.takeBytes();
           yield ZModemDataPacket(type, payload,crc0!, crc1!);
           return;
-        case consts.ZHEX | consts.ZDLEESC: {
-          ZModemHeader? header = headerParser.processByte(consts.ZDLE);
-          headerParser.processByte(char ^ consts.ZDLEESC);
-
-          if(header != null) {
-            yield header;
-            return;
-          }
-          continue;
-        }
+        
         default:
           buffer.addByte(char);
-          ZModemHeader? header = headerParser.processByte(char);
-          if(header != null) {
-            yield header;
-            return;
-          }
-
           continue;
       }
     }
