@@ -72,6 +72,9 @@ class ZModemCore {
         if (event != null) {
           yield event;
         }
+      } else if (packet is ZModemAbortSequence) {
+        print("Got Abort Sequence");
+         yield ZSessionCancelEvent();
       }
     }
   }
@@ -238,6 +241,11 @@ abstract class ZModemState {
         core._enqueue(ZModemHeader.rinit());
         core._state = _ZRinitState(core);
         return ZSessionRestartEvent();
+      case consts.ZFIN:
+        core._enqueue(ZModemHeader.fin());
+        core._state = _ZFinState(core);
+        return ZSessionFinishedEvent();
+      
       default:
         if( lastHeader != null && 
           header.type == lastHeader?.type) 
@@ -402,6 +410,7 @@ class _ZReceivingContentState extends ZModemState {
         core._enqueue(ZModemHeader.rinit());
         core._state = _ZRinitState(core);
         return ZFileEndEvent();
+      
       default:
         return super.handleHeader(header);
     }
@@ -417,6 +426,7 @@ class _ZReceivingContentState extends ZModemState {
       //print('Expecting subpacket ${packet.type}');
       core._expectDataSubpacket();
     }
+    
     return ZFileDataEvent(packet.data, packet);
   }
 }

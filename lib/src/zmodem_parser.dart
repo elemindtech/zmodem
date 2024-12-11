@@ -10,6 +10,7 @@ import 'package:zmodem/src/zmodem_header_parser.dart';
 
 class ZModemParser implements Iterator<ZModemPacket> {
   final _buffer = ChunkBuffer();
+  final _abortSequence = ZModemAbortSequence();
 
   late final Iterator<ZModemPacket?> _parser = _createParser().iterator;
 
@@ -70,6 +71,7 @@ class ZModemParser implements Iterator<ZModemPacket> {
   Iterable<ZModemPacket?> _createParser() sync* {
     while (true) {
       if (_expectDataSubpacket) {
+        _abortSequence.reset();
         _expectDataSubpacket = false;
         yield* _parseDataSubpacket();
         continue;
@@ -99,15 +101,34 @@ class ZModemParser implements Iterator<ZModemPacket> {
           continue;
         }
       }
+      final byte = _buffer.readByte();
+      if(byte == consts.CAN) {
+        print("Got CAN waiting for header");
+        if(_abortSequence.aborted(byte)) {
+          yield ZModemAbortSequence();
+          continue;
+        } else {
+          continue;
+        }
+      } else {
+        _abortSequence.reset();
+        _handleDirtyChar(byte);
+      }
 
-      _handleDirtyChar(_buffer.readByte());
+      //_handleDirtyChar(_buffer.readByte());
     }
   }
 
   void _handleDirtyChar(int byte) {
+
     if (byte == consts.XON) {
       return;
     }
+
+    
+    
+
+
     onPlainText?.call(byte);
   }
 //42, 42, 24, 88, 66, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 13,
@@ -195,10 +216,9 @@ class ZModemParser implements Iterator<ZModemPacket> {
 
   Iterable<ZModemPacket?> _parseDataSubpacket() sync* {
     final buffer = BytesBuilder();
-    final headerParser = ZModemHeaderParser();
-
+    //final headerParser = ZModemHeaderParser();
     while (true) {
-      final char = _buffer.readEscaped();
+      final char = _buffer.readEscaped(abortSequence: _abortSequence);
 
       if (char == null) {
         yield null;
@@ -206,10 +226,14 @@ class ZModemParser implements Iterator<ZModemPacket> {
       }
 
       switch (char) {
+        case consts.CANABORT:
+          yield ZModemAbortSequence();
+          return;
         case consts.ZCRCE | consts.ZDLEESC:
         case consts.ZCRCG | consts.ZDLEESC:
         case consts.ZCRCQ | consts.ZDLEESC:
         case consts.ZCRCW | consts.ZDLEESC:
+          // We get these at the end of a subpacket/frame.
           while (!_buffer.hasEscaped) yield null;
           final crc0 = _buffer.readEscaped();
 
@@ -230,6 +254,8 @@ class ZModemParser implements Iterator<ZModemPacket> {
 }
 
 extension _ChunkBufferExtensions on ChunkBuffer {
+
+        
   static int _toHex(int char) {
     if (char >= 0x30 && char <= 0x39) {
       return char - 0x30;
@@ -252,7 +278,7 @@ extension _ChunkBufferExtensions on ChunkBuffer {
   /// may consume more than one byte from the buffer if the byte is escaped.
   /// Returns `null` if the buffer is empty or if the buffer contains only
   /// the escape character.
-  int? readEscaped() {
+  int? readEscaped({ZModemAbortSequence? abortSequence}) {
     if (isEmpty) {
       return null;
     }
@@ -266,7 +292,26 @@ extension _ChunkBufferExtensions on ChunkBuffer {
     }
 
     expect(consts.ZDLE);
+
+    // If we got here, we know we got a ZDLE/CAN. Check if 
+    // we need to abort.
+    if(abortSequence?.aborted(consts.ZDLE) == true) {
+      print ("Aborting 1");
+      return consts.CANABORT; 
+    }
+
+
     final byte = readByte();
+
+    if(byte == consts.CAN) {
+      if(abortSequence?.aborted(consts.ZDLE) == true) {
+        print ("Aborting 2"); 
+        return consts.CANABORT;
+      }
+    } else {
+      abortSequence?.reset();
+    }
+
 
     switch (byte) {
       case consts.ZCRCE:
@@ -278,8 +323,6 @@ extension _ChunkBufferExtensions on ChunkBuffer {
         return 0x7f;
       case consts.ZRUB1:
         return 0xff;
-      case consts.ZHEX:  
-        return byte | consts.ZDLEESC;
       default:
         return byte ^ 0x40;
     }

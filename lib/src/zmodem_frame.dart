@@ -152,6 +152,7 @@ class ZModemHeader implements ZModemPacket {
   }
 }
 
+
 class ZModemDataPacket implements ZModemPacket {
   @override
   final Uint8List data;
@@ -290,7 +291,10 @@ String _frameTypeToString(int type) {
 }
 
 class ZModemAbortSequence implements ZModemPacket {
-  const ZModemAbortSequence();
+  var canCount = 0;
+  ZModemAbortSequence() {
+    canCount = 0;
+  }
 
   static final abortSequence = Uint8List.fromList([
     consts.CAN,
@@ -304,7 +308,28 @@ class ZModemAbortSequence implements ZModemPacket {
   Uint8List encode() {
     return abortSequence;
   }
+
+  bool aborted(var b) {
+    if(b == consts.CAN) {
+      canCount++;
+      if(canCount >= abortSequence.length) {
+        return true;
+      }
+      
+    }
+    return false;
+  }
+
+  void reset() {
+    canCount = 0;
+  }
+
 }
+
+
+
+
+
 
 class ZModemOverAndOut implements ZModemPacket {
   const ZModemOverAndOut();
