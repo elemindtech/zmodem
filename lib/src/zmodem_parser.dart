@@ -70,6 +70,7 @@ class ZModemParser implements Iterator<ZModemPacket> {
   /// yields a [ZModemPacket] when a packet is parsed.
   Iterable<ZModemPacket?> _createParser() sync* {
     while (true) {
+      //_buffer.printCurrentChunk();
       if (_expectDataSubpacket) {
         _abortSequence.reset();
         _expectDataSubpacket = false;
@@ -80,6 +81,7 @@ class ZModemParser implements Iterator<ZModemPacket> {
       while (_buffer.length < 4) {
         yield null;
       }
+      
       //42, 42, 24, 88, 66, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 13,
       if (_buffer.peek() == consts.ZPAD) {
         if (_buffer.peek(1) == consts.ZPAD &&
@@ -103,7 +105,6 @@ class ZModemParser implements Iterator<ZModemPacket> {
       }
       final byte = _buffer.readByte();
       if(byte == consts.CAN) {
-        print("Got CAN waiting for header");
         if(_abortSequence.aborted(byte)) {
           yield ZModemAbortSequence();
           continue;
@@ -181,7 +182,6 @@ class ZModemParser implements Iterator<ZModemPacket> {
     if(next == 0x11) {
       _buffer.readByte();
     } 
-
     yield ZModemHeader(frameType, p0, p1, p2, p3);
   }
 
@@ -296,7 +296,6 @@ extension _ChunkBufferExtensions on ChunkBuffer {
     // If we got here, we know we got a ZDLE/CAN. Check if 
     // we need to abort.
     if(abortSequence?.aborted(consts.ZDLE) == true) {
-      print ("Aborting 1");
       return consts.CANABORT; 
     }
 
@@ -305,7 +304,6 @@ extension _ChunkBufferExtensions on ChunkBuffer {
 
     if(byte == consts.CAN) {
       if(abortSequence?.aborted(consts.ZDLE) == true) {
-        print ("Aborting 2"); 
         return consts.CANABORT;
       }
     } else {

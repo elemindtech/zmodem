@@ -66,6 +66,14 @@ class ChunkBuffer {
 
     return null;
   }
+  void printUint8ListAsHex(Uint8List data) {
+    String hexString = data.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join(', ');
+    print(hexString.toUpperCase());
+  }
+
+  void printCurrentChunk() {
+    printUint8ListAsHex(_currentChunk!);
+  }
 
   int readByte() {
     while (true) {

@@ -60,7 +60,6 @@ class ZModemCore {
 
       if (packet is ZModemHeader) {
         final event = _state.handleHeader(packet);
-        // Logger.d ('Got header');
         ZModemState.lastHeader = packet;
         if (event != null) {
           // Logger.d ('Yield header');
@@ -73,7 +72,6 @@ class ZModemCore {
           yield event;
         }
       } else if (packet is ZModemAbortSequence) {
-        print("Got Abort Sequence");
          yield ZSessionCancelEvent();
       }
     }
@@ -391,6 +389,11 @@ class _ZWaitingContentState extends ZModemState {
         core._state = _ZReceivingContentState(core);
         core._expectDataSubpacket();
         return ZDataEvent(header.p3, header.p2, header.p1, header.p0);
+      case consts.ZEOF:
+        // Handle ZEOF here in the case of a 0 byte file size.
+        core._enqueue(ZModemHeader.rinit());
+        core._state = _ZRinitState(core);
+        return ZFileEndEvent();
       default:
         return super.handleHeader(header);
     }
@@ -406,7 +409,7 @@ class _ZReceivingContentState extends ZModemState {
   ZModemEvent? handleHeader(ZModemHeader header) {
     switch (header.type) {
       case consts.ZEOF:
-        //print('GOT ZEOF');
+
         core._enqueue(ZModemHeader.rinit());
         core._state = _ZRinitState(core);
         return ZFileEndEvent();
