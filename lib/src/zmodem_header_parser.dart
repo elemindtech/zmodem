@@ -1,5 +1,4 @@
 import 'dart:core';
-import 'dart:typed_data';
 import 'package:zmodem/src/consts.dart' as consts;
 import 'package:zmodem/src/crc.dart';
 import 'package:zmodem/src/util/string.dart';
