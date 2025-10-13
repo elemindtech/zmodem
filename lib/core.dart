@@ -39,8 +39,11 @@ class ZModemCore {
 
   final ZModemExceptionHandler? onException;
 
-
-
+  /// Attempts to resynchronize the parser after a parsing error.
+  /// Returns true if a potential frame start was found.
+  bool attemptResync() {
+    return _parser.attemptResync();
+  }
 
   requireState<T extends ZModemState>() {
     if (_state is! T) {

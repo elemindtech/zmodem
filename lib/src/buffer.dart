@@ -96,4 +96,32 @@ class ChunkBuffer {
       _readOffset = 0;
     }
   }
+
+  /// Attempts to resync the buffer by searching for the next ZPAD sequence.
+  /// ZPAD is the start of a ZMODEM frame: ** (0x2A, 0x2A)
+  /// Returns true if a ZPAD sequence was found and buffer was repositioned.
+  bool resyncToNextFrame() {
+    const zpad = 0x2A; // '*' character
+    
+    // Scan through buffer looking for ** pattern
+    while (length >= 2) {
+      final byte1 = peek(0);
+      final byte2 = peek(1);
+      
+      if (byte1 == zpad && byte2 == zpad) {
+        // Found potential frame start
+        return true;
+      }
+      
+      // Skip this byte and continue searching
+      try {
+        readByte();
+      } catch (e) {
+        // End of buffer reached
+        return false;
+      }
+    }
+    
+    return false;
+  }
 }
