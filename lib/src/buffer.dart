@@ -6,6 +6,12 @@ class ChunkBuffer {
   /// chunk is guaranteed to have at least one byte.
   final _backlog = Queue<Uint8List>();
 
+  /// Maximum number of chunks to keep in backlog to prevent unbounded memory growth
+  static const int _maxBacklogSize = 50;
+
+  /// Track peak backlog size for diagnostics
+  int _backlogPeakSize = 0;
+
   /// The number of bytes in the buffer that have not been consumed.
   var _length = 0;
 
@@ -28,7 +34,27 @@ class ChunkBuffer {
       return;
     }
     if (_currentChunk != null) {
+      // Enforce maximum backlog size to prevent memory exhaustion
+      // If backlog is full, this indicates the consumer is too slow
+      if (_backlog.length >= _maxBacklogSize) {
+        // This is a critical condition - parser can't keep up with incoming data
+        // Drop the oldest chunk to prevent OOM, but this may cause data corruption
+        print('WARNING: ChunkBuffer backlog full ($_maxBacklogSize chunks) - '
+            'dropping oldest chunk. Parser may be too slow.');
+        final droppedChunk = _backlog.removeFirst();
+        _length -= droppedChunk.length;
+      }
       _backlog.add(chunk);
+      
+      // Track peak backlog size for diagnostics
+      if (_backlog.length > _backlogPeakSize) {
+        _backlogPeakSize = _backlog.length;
+        // Log when backlog grows significantly (>50% capacity)
+        if (_backlog.length > _maxBacklogSize ~/ 2) {
+          print('ChunkBuffer backlog growing: ${_backlog.length}/$_maxBacklogSize '
+              '(peak: $_backlogPeakSize, $_length bytes buffered)');
+        }
+      }
     } else {
       _currentChunk = chunk;
     }
@@ -123,5 +149,21 @@ class ChunkBuffer {
     }
     
     return false;
+  }
+
+  /// Get diagnostic information about the buffer state
+  /// Returns a map with current backlog size, peak size, and buffered bytes
+  Map<String, int> getDiagnostics() {
+    return {
+      'backlogSize': _backlog.length,
+      'backlogPeak': _backlogPeakSize,
+      'bufferedBytes': _length,
+      'maxBacklogSize': _maxBacklogSize,
+    };
+  }
+
+  /// Reset diagnostic counters (call at start of new session)
+  void resetDiagnostics() {
+    _backlogPeakSize = 0;
   }
 }
