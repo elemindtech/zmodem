@@ -31,7 +31,10 @@ class ZModemParser implements Iterator<ZModemPacket> {
     _buffer.add(data);
   }
 
-  /// Attempts to resynchronize the parser by searching for the next valid
+  /// Get access to the chunk buffer for diagnostics
+  ChunkBuffer get buffer => _buffer;
+
+  /// Attempts to resynchronize the parser by searching for the next
   /// ZMODEM frame start sequence (**). This is useful after a parsing error
   /// to help the parser recover from corrupted data.
   /// Returns true if a potential frame start was found.

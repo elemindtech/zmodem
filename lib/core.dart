@@ -31,6 +31,9 @@ class ZModemCore {
   bool get isFinished => _state is _ZFinState;
   bool get isIdle => _state is _ZInitState;
 
+  /// Expose parser for buffer diagnostics
+  ZModemParser get parser => _parser;
+
   final maxDataSubpacketSize = 8192;
 
   final ZModemTraceHandler? onTrace;
