@@ -6,8 +6,10 @@ class ChunkBuffer {
   /// chunk is guaranteed to have at least one byte.
   final _backlog = Queue<Uint8List>();
 
-  /// Maximum number of chunks to keep in backlog to prevent unbounded memory growth
-  static const int _maxBacklogSize = 50;
+  /// Maximum number of chunks to keep in backlog to prevent unbounded memory growth.
+  /// 500 accommodates BLE bursts at MTU 244 during ZMODEM transfers without
+  /// dropping data. At ~244 bytes per chunk this caps memory at ~122 KB.
+  static const int _maxBacklogSize = 500;
 
   /// Track peak backlog size for diagnostics
   int _backlogPeakSize = 0;
