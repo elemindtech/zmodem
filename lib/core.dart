@@ -91,6 +91,7 @@ class ZModemCore {
     _parser.expectDataSubpacket();
   }
 
+  // ignore: unused_element
   void _requireState<T extends ZModemState>() {
     if (_state is! T) {
       throw ZModemException(

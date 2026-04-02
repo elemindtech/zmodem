@@ -119,6 +119,7 @@ class CRC32 {
 }
 
 void main() {
+  // ignore: unused_local_variable
   final crc = CRC16()
     ..update(0x01)
     ..update(0x00)

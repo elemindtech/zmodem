@@ -17,7 +17,6 @@ abstract class ZModemPacket {
 }
 
 class ZModemHeader implements ZModemPacket {
-  @override
   final int type;
 
   final int p0;
@@ -153,7 +152,6 @@ class ZModemHeader implements ZModemPacket {
 
 
 class ZModemDataPacket implements ZModemPacket {
-  @override
   final Uint8List data;
   final int type;
   final int crc0;

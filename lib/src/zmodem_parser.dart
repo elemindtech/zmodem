@@ -156,7 +156,9 @@ class ZModemParser implements Iterator<ZModemPacket> {
     final p1 = _buffer.readAsciiByte();
     final p2 = _buffer.readAsciiByte();
     final p3 = _buffer.readAsciiByte();
+    // ignore: unused_local_variable
     final crc0 = _buffer.readAsciiByte();
+    // ignore: unused_local_variable
     final crc1 = _buffer.readAsciiByte();
 
     //('Frame type $frameType');
@@ -216,9 +218,11 @@ class ZModemParser implements Iterator<ZModemPacket> {
     final p3 = _buffer.readEscaped()!;
 
     while (!_buffer.hasEscaped) yield null;
+    // ignore: unused_local_variable
     final crc0 = _buffer.readEscaped()!;
 
     while (!_buffer.hasEscaped) yield null;
+    // ignore: unused_local_variable
     final crc1 = _buffer.readEscaped()!;
     yield ZModemHeader(frameType, p0, p1, p2, p3);
   }
