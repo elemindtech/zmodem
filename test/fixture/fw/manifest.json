@@ -1,0 +1,68 @@
+{
+ "happy_2700": {
+  "device_path": "/fx_2700.bin",
+  "bytes": 3253,
+  "log": [
+   "got ZRQINIT pos=0",
+   "got ZFILE pos=0",
+   "got ZDATA pos=0",
+   "got ZEOF pos=2700",
+   "got ZFIN pos=0"
+  ]
+ },
+ "happy_65536": {
+  "device_path": "/fx_65536.bin",
+  "bytes": 68151,
+  "log": [
+   "got ZRQINIT pos=0",
+   "got ZFILE pos=0",
+   "got ZDATA pos=0",
+   "got ZEOF pos=65536",
+   "got ZFIN pos=0"
+  ]
+ },
+ "size_1024": {
+  "device_path": "/fx_1024.bin",
+  "bytes": 1605,
+  "log": [
+   "got ZRQINIT pos=0",
+   "got ZFILE pos=0",
+   "got ZDATA pos=0",
+   "got ZEOF pos=1024",
+   "got ZFIN pos=0"
+  ]
+ },
+ "size_1025": {
+  "device_path": "/fx_1025.bin",
+  "bytes": 1619,
+  "log": [
+   "got ZRQINIT pos=0",
+   "got ZFILE pos=0",
+   "got ZDATA pos=0",
+   "got ZEOF pos=1025",
+   "got ZFIN pos=0"
+  ]
+ },
+ "dedup_32x1k": {
+  "device_path": "/fx_dedup.bin",
+  "bytes": 34345,
+  "log": [
+   "got ZRQINIT pos=0",
+   "got ZFILE pos=0",
+   "got ZDATA pos=0",
+   "got ZEOF pos=32768",
+   "got ZFIN pos=0"
+  ]
+ },
+ "resume_12345": {
+  "device_path": "/fx_65536.bin",
+  "bytes": 55869,
+  "log": [
+   "got ZRQINIT pos=0",
+   "got ZFILE pos=0",
+   "got ZDATA pos=12345",
+   "got ZEOF pos=65536",
+   "got ZFIN pos=0"
+  ]
+ }
+}
