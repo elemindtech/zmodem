@@ -34,12 +34,25 @@ class ZFileDataEvent implements ZModemEvent {
 }
 
 /// The file we're currently receiving has been completely transferred.
+///
+/// The sender has sent ZEOF and is now waiting for the receiver's verdict.
+/// The core does NOT auto-acknowledge: the consumer must call either
+/// [ZModemCore.ackFileEnd] (durably stored -> reply ZRINIT, let the sender
+/// delete its copy) or [ZModemCore.abortSession] (bytes missing on disk ->
+/// CAN, so the sender retains the file and re-offers it). [position] is the
+/// sender's declared end-of-file offset (== the full file length for a
+/// complete transfer), decoded little-endian from the ZEOF header.
 class ZFileEndEvent implements ZModemEvent {
+  final int position;
+
+  const ZFileEndEvent([this.position = 0]);
+
   @override
   String toString() {
-    return 'ZFileEndEvent()';
+    return 'ZFileEndEvent(position: $position)';
   }
 }
+
 class ZFileEvent implements ZModemEvent {
   final int p0;
   final int p1;
@@ -60,15 +73,13 @@ class ZDataEvent implements ZModemEvent {
   int _offset = 0;
   int get offset => _offset;
   ZDataEvent(int p0, int p1, int p2, int p3) {
-    _offset = (p0 << 24) | (p1 << 16) | (p2 << 8) |  (p3 << 0);
+    _offset = (p0 << 24) | (p1 << 16) | (p2 << 8) | (p3 << 0);
   }
   @override
   String toString() {
     return 'ZDataEvent($_offset)';
   }
 }
-
-
 
 /// The event fired when the ZModem session is fully closed.
 class ZSessionFinishedEvent implements ZModemEvent {
