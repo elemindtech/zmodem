@@ -29,13 +29,16 @@ Uint8List hexHeader(int type, int p, {bool xon = true}) {
     }
   }
   final body = [...raw, crc >> 8, crc & 0xFF];
-  final hex = body
-      .map((b) => b.toRadixString(16).padLeft(2, '0'))
-      .join()
-      .codeUnits;
+  final hex =
+      body.map((b) => b.toRadixString(16).padLeft(2, '0')).join().codeUnits;
   return Uint8List.fromList([
-    consts.ZPAD, consts.ZPAD, consts.ZDLE, consts.ZHEX,
-    ...hex, 0x0d, 0x0a,
+    consts.ZPAD,
+    consts.ZPAD,
+    consts.ZDLE,
+    consts.ZHEX,
+    ...hex,
+    0x0d,
+    0x0a,
     if (xon) consts.XON,
   ]);
 }
@@ -54,7 +57,8 @@ void main() {
   setUp(resetStatics);
 
   group('link framing', () {
-    test('PIN: hex header with the Elemind XON link marker delivers, '
+    test(
+        'PIN: hex header with the Elemind XON link marker delivers, '
         'and the XON is consumed silently', () {
       final seenText = <int>[];
       final withXon = hexHeader(consts.ZFIN, 0, xon: true);
@@ -65,7 +69,8 @@ void main() {
           reason: 'the link marker must not leak into plain text');
     });
 
-    test('PIN: this parser revision also delivers a header whose '
+    test(
+        'PIN: this parser revision also delivers a header whose '
         'stream (momentarily) ends at LF', () {
       // The trailer parse peeks for a following XON; ChunkBuffer.peek
       // returns null on an empty buffer, so delivery does not wait for
@@ -75,11 +80,11 @@ void main() {
       // against parser revisions that were stricter here.
       final core = ZModemCore();
       final bare = hexHeader(consts.ZFIN, 0, xon: false);
-      expect(feed(core, bare).whereType<ZSessionFinishedEvent>(),
-          hasLength(1));
+      expect(feed(core, bare).whereType<ZSessionFinishedEvent>(), hasLength(1));
     });
 
-    test('PIN: the hex trailer REQUIRES LF - CR followed by anything '
+    test(
+        'PIN: the hex trailer REQUIRES LF - CR followed by anything '
         'else throws a StateError out of receive()', () {
       // Senders must terminate hex headers with CR LF (or LF). There
       // is no graceful recovery inside the parser: the generator
@@ -88,25 +93,41 @@ void main() {
       final bad = BytesBuilder()
         ..add(hexHeader(consts.ZFIN, 0, xon: false).sublist(0, 19)) // ..CR
         ..add([consts.XON]); // XON where LF belongs
-      expect(() => core.receive(bad.toBytes()).toList(),
-          throwsStateError);
+      expect(() => core.receive(bad.toBytes()).toList(), throwsStateError);
     });
   });
 
   group('session state machine', () {
-    test('PIN: a closed session ignores ZRQINIT — only ZFIN gets "OO"',
-        () {
-      // After finishSession() the receiver sits in its closed state.
-      // A firmware retrying ZRQINIT gets silence (this stranded
+    test('PIN(v2): a closed session HONORS ZRQINIT as a session restart', () {
+      // Historically the closed state ignored ZRQINIT ("this stranded
       // multi-session syncs until the firmware learned to cancel and
-      // reopen); only the peer's ZFIN elicits the final OO.
+      // reopen"). That deafness forced every fielded sender through a
+      // 7-10 s timeout + CAN spray when its ZFIN reply was lost, and the
+      // CAN handling resets the app's zero-event watchdog, so the wedge
+      // could persist. As of the e2e-ack change the closed state falls
+      // through to the base ZRQINIT restart handler: reply ZRINIT and
+      // surface ZSessionRestartEvent (the consumer resets its session).
+      // Firmware re-audit (all released tags 0.59.33-2.7.0): every sender
+      // blocks waiting for exactly this ZRINIT after ZRQINIT; none depends
+      // on the old silence.
       final core = ZModemCore();
       core.finishSession();
       core.dataToSend(); // drain our ZFIN
 
-      expect(feed(core, hexHeader(consts.ZRQINIT, 0)), isEmpty);
-      expect(core.dataToSend(), isEmpty,
-          reason: 'no ZRINIT reply from a closed session');
+      final events = feed(core, hexHeader(consts.ZRQINIT, 0));
+      expect(events.whereType<ZSessionRestartEvent>(), hasLength(1),
+          reason: 'closed session must surface the restart');
+      final out = core.dataToSend();
+      // A ZRINIT hex header renders as '**' ZDLE 'B' + '01...' — the
+      // type byte 0x01 as lowercase hex right after the preamble.
+      expect(String.fromCharCodes(out), contains('B01'),
+          reason: 'closed session must answer ZRQINIT with ZRINIT');
+    });
+
+    test('PIN: a closed session answers ZFIN with "OO"', () {
+      final core = ZModemCore();
+      core.finishSession();
+      core.dataToSend(); // drain our ZFIN
 
       final fin = feed(core, hexHeader(consts.ZFIN, 0));
       expect(fin.whereType<ZSessionFinishedEvent>(), hasLength(1));
@@ -129,8 +150,7 @@ void main() {
       final events = feed(core, hexHeader(11 /* ZEOF */, 0));
       expect(events.whereType<ZSessionCancelEvent>(), hasLength(1));
       final out = core.dataToSend();
-      final cans =
-          out.where((b) => b == 0x18).length; // CAN == ZDLE == 0x18
+      final cans = out.where((b) => b == 0x18).length; // CAN == ZDLE == 0x18
       expect(cans, greaterThanOrEqualTo(5),
           reason: 'abort sequence must carry the CAN run');
 
@@ -148,48 +168,51 @@ void main() {
 
   group('duplicate-subpacket suppression', () {
     test(
-        'PIN: a stray data subpacket whose (type, crc) equal the '
-        'previous one is silently dropped — and the memory of the '
-        'previous one is STATIC across core instances', () {
-      // This is why the firmware sender varies its subpacket slicing
-      // for files with repeated content, and why its dedup tracker
-      // survives session restarts: the receiver's comparison state
-      // outlives the session object itself. (A data subpacket only
-      // surfaces when the parser is armed; states without their own
-      // subpacket handler fall through to the base handler that does
-      // this check.)
+        'PIN(v2): a stray data subpacket in the INIT state is dropped '
+        'silently (no CAN), and the dedup memory stays STATIC across '
+        'core instances', () {
+      // Historically the init state fell through to the base handler,
+      // answering the FIRST stray subpacket with a 5-CAN abort. The only
+      // fielded path that delivers a parsed subpacket to an init-state
+      // core is the moment right after WE abort a session mid-ZDATA
+      // (abortSession leaves the parser armed): 1-3 in-flight subpackets
+      // then arrive, and a CAN-per-packet reply piles onto the sender's
+      // own 8-CAN + 1 s teardown for no benefit. As of the e2e-ack change
+      // the init state drops stray subpackets silently. The app-restart
+      // protection is unaffected: a FRESH core's parser is never armed,
+      // so mid-download restart bytes still route through onPlainText
+      // (whose ZDLE heuristic aborts).
       final fileInfo = ZModemFileInfo(pathname: 'x', length: 3);
       final infoPacket = ZModemDataPacket.fileInfo(fileInfo);
 
-      // Prime the static from core A: arm the parser so the stray is
-      // parsed while the state (fresh init) has no subpacket handler.
       final coreA = ZModemCore();
       coreA.parser.expectDataSubpacket();
       final strayA = feed(coreA, infoPacket.encode());
-      expect(strayA.whereType<ZSessionCancelEvent>(), hasLength(1),
-          reason: 'first stray subpacket aborts the session');
-      coreA.dataToSend();
+      expect(strayA, isEmpty,
+          reason: 'stray subpacket in init is dropped, not aborted');
+      expect(coreA.dataToSend(), isEmpty,
+          reason: 'no CAN reply to a stray subpacket after an abort');
 
-      // A brand-new core still remembers it: the identical stray is
-      // now IGNORED instead of aborting.
+      // The static (type, crc) memory is still primed unconditionally by
+      // receive(), so duplicate suppression in RECEIVING states keeps
+      // working across core instances exactly as before.
+      expect(ZModemState.lastSubPacket, isNotNull,
+          reason: 'dedup memory primed even for dropped strays');
       final coreB = ZModemCore();
       coreB.parser.expectDataSubpacket();
       final strayB = feed(coreB, infoPacket.encode());
-      expect(strayB, isEmpty,
-          reason: 'identical (type, crc) suppressed via STATIC state');
+      expect(strayB, isEmpty);
       expect(coreB.dataToSend(), isEmpty);
     });
   });
 
   group('data subpacket re-arm', () {
-    Uint8List zbinHeader(int type, int p) =>
-        ZModemHeader(type, p & 0xFF, (p >> 8) & 0xFF, (p >> 16) & 0xFF,
-                (p >> 24) & 0xFF)
-            .encode();
+    Uint8List zbinHeader(int type, int p) => ZModemHeader(
+            type, p & 0xFF, (p >> 8) & 0xFF, (p >> 16) & 0xFF, (p >> 24) & 0xFF)
+        .encode();
 
     Uint8List dataSubpacket(List<int> bytes, {bool eof = false}) =>
-        ZModemDataPacket.fileData(Uint8List.fromList(bytes), eof: eof)
-            .encode();
+        ZModemDataPacket.fileData(Uint8List.fromList(bytes), eof: eof).encode();
 
     ZModemCore receivingCore() {
       final core = ZModemCore();

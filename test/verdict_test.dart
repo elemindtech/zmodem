@@ -10,6 +10,7 @@ import 'dart:typed_data';
 import 'package:test/test.dart';
 import 'package:zmodem/zmodem.dart';
 import 'package:zmodem/src/consts.dart' as consts;
+import 'package:zmodem/src/zmodem_frame.dart' show ZModemDataPacket;
 
 void resetStatics() {
   ZModemState.lastHeader = null;
@@ -39,6 +40,39 @@ class _Pair {
     }
   }
 }
+
+/// A fw-style hex header of arbitrary type (dialect the fielded parser reads).
+Uint8List _hexHeader(int type, int pos) {
+  final raw = [
+    type,
+    pos & 0xFF,
+    (pos >> 8) & 0xFF,
+    (pos >> 16) & 0xFF,
+    (pos >> 24) & 0xFF,
+  ];
+  var crc = 0;
+  for (final b in raw) {
+    crc ^= b << 8;
+    for (var i = 0; i < 8; i++) {
+      crc = ((crc & 0x8000) != 0 ? (crc << 1) ^ 0x1021 : crc << 1) & 0xFFFF;
+    }
+  }
+  final body = [...raw, crc >> 8, crc & 0xFF];
+  final hex =
+      body.map((b) => b.toRadixString(16).padLeft(2, '0')).join().codeUnits;
+  return Uint8List.fromList([
+    consts.ZPAD,
+    consts.ZPAD,
+    consts.ZDLE,
+    consts.ZHEX,
+    ...hex,
+    0x0d,
+    0x0a,
+    consts.XON,
+  ]);
+}
+
+Uint8List zrqinitHeader() => _hexHeader(consts.ZRQINIT, 0);
 
 /// A fw-style ZEOF hex header (matches the dialect the fielded parser reads).
 Uint8List zeofHeader(int pos) {
@@ -142,6 +176,56 @@ void main() {
       p.client.ackFileEnd();
       expect(
           p.server.receive(p.client.dataToSend()), [isA<ZReadyToSendEvent>()]);
+    });
+
+    test('ackFileEnd() reports whether the ack was actually issued', () {
+      final p = _Pair(2700);
+      expect(p.client.isAwaitingVerdict, isTrue);
+      expect(p.client.ackFileEnd(), isTrue,
+          reason: 'first ack from the verdict state is issued');
+      expect(p.client.isAwaitingVerdict, isFalse);
+      expect(p.client.ackFileEnd(), isFalse,
+          reason: 'a second ack (or one after a restart) must report '
+              'failure so the caller does not finishSession a session '
+              'that is no longer awaiting the verdict');
+    });
+
+    test('an 8-CAN spray maps to exactly ONE cancel event', () {
+      // The firmware answers every failed send with EIGHT CANs; the
+      // counter must reset after firing so the spray does not yield one
+      // cancel per surplus CAN.
+      final core = ZModemCore();
+      final events =
+          core.receive(Uint8List.fromList(List.filled(8, 0x18))).toList();
+      expect(events.whereType<ZSessionCancelEvent>(), hasLength(1));
+    });
+
+    test('stray subpackets after an abort are dropped without a CAN reply', () {
+      final p = _Pair(2700);
+      p.client.abortSession();
+      p.client.dataToSend(); // drain our CAN run
+      // 1-3 in-flight ZCRCG subpackets can still arrive; the parser is
+      // still armed from the aborted transfer.
+      p.client.parser.expectDataSubpacket();
+      final stray = p.client
+          .receive(
+              ZModemDataPacket.fileData(Uint8List.fromList([1, 2, 3])).encode())
+          .toList();
+      expect(stray, isEmpty, reason: 'dropped silently');
+      expect(p.client.dataToSend(), isEmpty,
+          reason: 'no CAN-per-packet churn after our own abort');
+    });
+
+    test('a closed session honors ZRQINIT (restart) after the verdict', () {
+      final p = _Pair(2700);
+      p.client.ackFileEnd();
+      p.client.finishSession();
+      p.client.dataToSend(); // drain ZRINIT + ZFIN
+      // The firmware's ZFIN reply is lost; it starts the next session.
+      final events = p.client.receive(zrqinitHeader()).toList();
+      expect(events.whereType<ZSessionRestartEvent>(), hasLength(1));
+      expect(p.client.dataToSend(), isNotEmpty,
+          reason: 'the new session gets its ZRINIT instead of silence');
     });
 
     test('0-byte file: ZEOF with no ZDATA still awaits a verdict', () {

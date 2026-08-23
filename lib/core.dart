@@ -162,16 +162,29 @@ class ZModemCore {
     _state = _ZWaitingContentState(this);
   }
 
+  /// Whether the core is holding a received file's ZEOF, waiting for the
+  /// consumer's verdict (ackFileEnd / abortSession). Consumers should
+  /// re-check this after any await before issuing the verdict: a session
+  /// restart (ZRQINIT) or teardown during the gap leaves the verdict stale.
+  bool get isAwaitingVerdict => _state is _ZAwaitingVerdictState;
+
   /// Acknowledge the end of a received file after the consumer has durably
   /// stored (and, if it wishes, verified) its bytes. Replies ZRINIT, which
   /// is the sender's signal that delivery succeeded and it may delete its
   /// copy. Only valid in [_ZAwaitingVerdictState] (entered on ZEOF).
-  void ackFileEnd() {
+  ///
+  /// Returns true when the ack was actually issued; false when the core had
+  /// already left the verdict state (session restarted/reset during the
+  /// consumer's verification) — the caller must NOT proceed to
+  /// [finishSession] in that case, or it would push a freshly restarted
+  /// session into the closed state and go deaf to the sender's next offer.
+  bool ackFileEnd() {
     if (!_checkState<_ZAwaitingVerdictState>()) {
-      return;
+      return false;
     }
     _enqueue(ZModemHeader.rinit());
     _state = _ZRinitState(this);
+    return true;
   }
 
   void ackFrame(int offset) {
@@ -323,6 +336,16 @@ class _ZInitState extends ZModemState {
       default:
         return super.handleHeader(header);
     }
+  }
+
+  @override
+  ZModemEvent? handleDataSubpacket(ZModemDataPacket packet) {
+    // After we abort a session mid-ZDATA (CAN run), 1-3 already-in-flight
+    // subpackets can still arrive while the core sits here. Drop them
+    // silently: the base handler would answer each with ANOTHER CAN run,
+    // and the sender responds to every abort with its own 8-CAN spray +
+    // 1 s delay — one abort per session is enough.
+    return null;
   }
 }
 
@@ -557,6 +580,14 @@ class _ZClosedState extends ZModemState {
         core._enqueue(ZModemOverAndOut());
         core._state = _ZFinState(core);
         return ZSessionFinishedEvent();
+      case consts.ZRQINIT:
+        // Our side of the session is complete (we sent ZFIN); if the
+        // sender's ZFIN reply was lost and it starts the NEXT session, honor
+        // it via the base restart handler (reply ZRINIT) instead of staying
+        // deaf. A deaf closed core would force the sender through a 7-10 s
+        // timeout + CAN spray per attempt, and the parser's CAN handling
+        // resets the zero-event watchdog, so the wedge could persist.
+        return super.handleHeader(header);
     }
     return null;
   }
