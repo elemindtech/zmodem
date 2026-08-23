@@ -150,16 +150,13 @@ class ZModemHeader implements ZModemPacket {
   }
 }
 
-
 class ZModemDataPacket implements ZModemPacket {
   final Uint8List data;
   final int type;
   final int crc0;
   final int crc1;
 
-  ZModemDataPacket(this.type, this.data, [this.crc0=0, this.crc1=0]);
-
-  
+  ZModemDataPacket(this.type, this.data, [this.crc0 = 0, this.crc1 = 0]);
 
   factory ZModemDataPacket.fileInfo(ZModemFileInfo fileInfo) {
     final buffer = BytesBuilder();
@@ -307,12 +304,17 @@ class ZModemAbortSequence implements ZModemPacket {
   }
 
   bool aborted(var b) {
-    if(b == consts.CAN) {
+    if (b == consts.CAN) {
       canCount++;
-      if(canCount >= abortSequence.length) {
+      if (canCount >= abortSequence.length) {
+        // Reset so one wire-level spray maps to exactly one abort event.
+        // The firmware answers every failed send with EIGHT CANs; without
+        // this reset, CANs #6..#8 each yield another ZModemAbortSequence
+        // (the counter stays latched >= 5), producing spurious extra
+        // ZSessionCancelEvents per abort.
+        canCount = 0;
         return true;
       }
-      
     }
     return false;
   }
@@ -320,13 +322,7 @@ class ZModemAbortSequence implements ZModemPacket {
   void reset() {
     canCount = 0;
   }
-
 }
-
-
-
-
-
 
 class ZModemOverAndOut implements ZModemPacket {
   const ZModemOverAndOut();

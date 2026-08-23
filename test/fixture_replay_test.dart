@@ -62,6 +62,11 @@ ReplayResult replay(
         core.acceptFile(acceptOffset);
       } else if (event is ZFileDataEvent) {
         r.data.add(event.data);
+      } else if (event is ZFileEndEvent) {
+        // The receiver no longer auto-acks ZEOF; the app acks once the
+        // bytes are durably stored. Replay the happy path: ack immediately
+        // so the outbound stream (and its post-ZEOF ZRINIT) is unchanged.
+        core.ackFileEnd();
       } else if (event is ZSessionFinishedEvent) {
         r.finished = true;
       } else if (event is ZSessionCancelEvent) {

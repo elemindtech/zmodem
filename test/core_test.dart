@@ -31,13 +31,16 @@ void main() {
           [isA<ZDataEvent>(), isA<ZFileDataEvent>()]);
 
       server.finishSending(3);
-      expect(
-        client.receive(server.dataToSend()),
-        [
-          isA<ZFileDataEvent>(), // ZCRCE
-          isA<ZFileEndEvent>(), // ZEOF
-        ],
-      );
+      final endEvents = client.receive(server.dataToSend()).toList();
+      expect(endEvents, [
+        isA<ZFileDataEvent>(), // ZCRCE
+        isA<ZFileEndEvent>(), // ZEOF
+      ]);
+      // The receiver no longer auto-replies ZRINIT on ZEOF: the consumer
+      // must acknowledge once it has durably stored the bytes. The ZEOF
+      // position is the full file length.
+      expect(endEvents.whereType<ZFileEndEvent>().single.position, 3);
+      client.ackFileEnd();
 
       expect(server.receive(client.dataToSend()), [isA<ZReadyToSendEvent>()]);
 

@@ -13,7 +13,8 @@ typedef ZModemTraceHandler = void Function(String message);
 
 typedef ZModemTextHandler = void Function(int char);
 
-typedef ZModemExceptionHandler = void Function<T extends ZModemState>(ZModemState state);
+typedef ZModemExceptionHandler = void Function<T extends ZModemState>(
+    ZModemState state);
 
 /// Contains the state of a ZModem session.
 class ZModemCore {
@@ -55,8 +56,7 @@ class ZModemCore {
       // );
       onException?.call<T>(_state);
     }
-     
-   }// onException?.call(T, _state);
+  } // onException?.call(T, _state);
 
   Iterable<ZModemEvent> receive(Uint8List data) sync* {
     _parser.addData(data);
@@ -78,7 +78,7 @@ class ZModemCore {
           yield event;
         }
       } else if (packet is ZModemAbortSequence) {
-         yield ZSessionCancelEvent();
+        yield ZSessionCancelEvent();
       }
     }
   }
@@ -109,7 +109,6 @@ class ZModemCore {
     return true;
   }
 
-
   bool get hasDataToSend => _sendQueue.isNotEmpty;
 
   Uint8List dataToSend() {
@@ -125,7 +124,7 @@ class ZModemCore {
 
   void initiateSend() {
     //_requireState<_ZInitState>();
-    if(!_checkState<_ZInitState>()) {
+    if (!_checkState<_ZInitState>()) {
       return;
     }
     _enqueue(ZModemHeader.rqinit());
@@ -134,7 +133,7 @@ class ZModemCore {
 
   void initiateReceive() {
     //_requireState<_ZInitState>();
-    if(!_checkState<_ZInitState>()) {
+    if (!_checkState<_ZInitState>()) {
       return;
     }
     _enqueue(ZModemHeader.rinit());
@@ -143,17 +142,49 @@ class ZModemCore {
 
   void acceptFile([int offset = 0]) {
     //_requireState<_ZReceivedFileProposalState>();
-    if(!_checkState<_ZReceivedFileProposalState>()) {
+    if (!_checkState<_ZReceivedFileProposalState>()) {
       return;
     }
     _enqueue(ZModemHeader.rpos(offset));
     _state = _ZWaitingContentState(this);
   }
 
-   void positionFile([int offset = 0]) {
-     _enqueue(ZModemHeader.rpos(offset));
-     _state = _ZWaitingContentState(this);
-    
+  void positionFile([int offset = 0]) {
+    // Only meaningful while a file is actively being received. Guard so a
+    // late ErrorFileState timer (which drives positionFile) cannot clobber
+    // the awaiting-verdict state and silently resume a transfer the
+    // consumer has already decided the verdict for.
+    if (_state is! _ZReceivingContentState &&
+        _state is! _ZWaitingContentState) {
+      return;
+    }
+    _enqueue(ZModemHeader.rpos(offset));
+    _state = _ZWaitingContentState(this);
+  }
+
+  /// Whether the core is holding a received file's ZEOF, waiting for the
+  /// consumer's verdict (ackFileEnd / abortSession). Consumers should
+  /// re-check this after any await before issuing the verdict: a session
+  /// restart (ZRQINIT) or teardown during the gap leaves the verdict stale.
+  bool get isAwaitingVerdict => _state is _ZAwaitingVerdictState;
+
+  /// Acknowledge the end of a received file after the consumer has durably
+  /// stored (and, if it wishes, verified) its bytes. Replies ZRINIT, which
+  /// is the sender's signal that delivery succeeded and it may delete its
+  /// copy. Only valid in [_ZAwaitingVerdictState] (entered on ZEOF).
+  ///
+  /// Returns true when the ack was actually issued; false when the core had
+  /// already left the verdict state (session restarted/reset during the
+  /// consumer's verification) — the caller must NOT proceed to
+  /// [finishSession] in that case, or it would push a freshly restarted
+  /// session into the closed state and go deaf to the sender's next offer.
+  bool ackFileEnd() {
+    if (!_checkState<_ZAwaitingVerdictState>()) {
+      return false;
+    }
+    _enqueue(ZModemHeader.rinit());
+    _state = _ZRinitState(this);
+    return true;
   }
 
   void ackFrame(int offset) {
@@ -169,10 +200,9 @@ class ZModemCore {
     _state = _ZInitState(this);
   }
 
-
   void skipFile() {
     //_requireState<_ZReceivedFileProposalState>();
-    if(!_checkState<_ZReceivedFileProposalState>()) {
+    if (!_checkState<_ZReceivedFileProposalState>()) {
       return;
     }
     _enqueue(ZModemHeader.skip());
@@ -181,7 +211,7 @@ class ZModemCore {
 
   void offerFile(ZModemFileInfo fileInfo) {
     //_requireState<_ZReadyToSendState>();
-    if(!_checkState<_ZReadyToSendState>()) {
+    if (!_checkState<_ZReadyToSendState>()) {
       return;
     }
     _enqueue(ZModemHeader.file());
@@ -191,7 +221,7 @@ class ZModemCore {
 
   void sendFileData(Uint8List data) {
     //_requireState<_ZSendingContentState>();
-    if(!_checkState<_ZSendingContentState>()) {
+    if (!_checkState<_ZSendingContentState>()) {
       return;
     }
 
@@ -203,7 +233,7 @@ class ZModemCore {
 
   void finishSending(int offset) {
     //_requireState<_ZSendingContentState>();
-    if(!_checkState<_ZSendingContentState>()) {
+    if (!_checkState<_ZSendingContentState>()) {
       return;
     }
     _enqueue(ZModemDataPacket.fileData(Uint8List(0), eof: true));
@@ -221,6 +251,13 @@ class ZModemCore {
   }
 }
 
+/// Decodes the little-endian file offset carried by a ZEOF header
+/// (p0 = least-significant byte; see [ZModemHeader.eof] /
+/// `ZModemHeader._littleEndian`). For a complete transfer this equals the
+/// full file length.
+int _eofPosition(ZModemHeader header) =>
+    header.p0 | (header.p1 << 8) | (header.p2 << 16) | (header.p3 << 24);
+
 class ZModemException implements Exception {
   ZModemException(this.message);
 
@@ -237,10 +274,7 @@ abstract class ZModemState {
   static ZModemDataPacket? lastSubPacket;
   static ZModemHeader? lastHeader;
 
-
-
   ZModemEvent? handleHeader(ZModemHeader header) {
-    
     switch (header.type) {
       case consts.ZRQINIT:
         core._enqueue(ZModemHeader.rinit());
@@ -250,34 +284,30 @@ abstract class ZModemState {
         core._enqueue(ZModemHeader.fin());
         core._state = _ZFinState(core);
         return ZSessionFinishedEvent();
-      
+
       default:
-        if( lastHeader != null && 
-          header.type == lastHeader?.type) 
-        {
+        if (lastHeader != null && header.type == lastHeader?.type) {
           // Ignore duplicates.
           //print("Ignore duplicate");
           return null;
         }
-       
-        // If we get any other unexpected message in any state, 
-        // send cancel to the sender. 
+
+        // If we get any other unexpected message in any state,
+        // send cancel to the sender.
         core._enqueue(ZModemAbortSequence());
         core._state = _ZInitState(core);
         return ZSessionCancelEvent();
-        //throw ZModemException('Unexpected header: $header (state: $this)');
+      //throw ZModemException('Unexpected header: $header (state: $this)');
     }
-    
   }
 
   ZModemEvent? handleDataSubpacket(ZModemDataPacket packet) {
     //throw ZModemException('Unexpected data subpacket: $packet (state: $this)');
 
-    if( lastSubPacket != null && 
+    if (lastSubPacket != null &&
         packet.type == lastSubPacket?.type &&
         packet.crc0 == lastSubPacket?.crc0 &&
-        packet.crc1 == lastSubPacket?.crc1) 
-    {
+        packet.crc1 == lastSubPacket?.crc1) {
       // ignore duplicates.
       return null;
     }
@@ -285,7 +315,6 @@ abstract class ZModemState {
     core._enqueue(ZModemAbortSequence());
     core._state = _ZInitState(core);
     return ZSessionCancelEvent();
-    
   }
 }
 
@@ -308,6 +337,16 @@ class _ZInitState extends ZModemState {
         return super.handleHeader(header);
     }
   }
+
+  @override
+  ZModemEvent? handleDataSubpacket(ZModemDataPacket packet) {
+    // After we abort a session mid-ZDATA (CAN run), 1-3 already-in-flight
+    // subpackets can still arrive while the core sits here. Drop them
+    // silently: the base handler would answer each with ANOTHER CAN run,
+    // and the sender responds to every abort with its own 8-CAN spray +
+    // 1 s delay — one abort per session is enough.
+    return null;
+  }
 }
 
 /// A state where we have requested a file transfer and waiting a file proposal.
@@ -326,12 +365,12 @@ class _ZRinitState extends ZModemState {
         core._state = _ZReceivedFileProposalState(core);
         core._expectDataSubpacket();
         return ZFileEvent(header.p0, header.p1, header.p2, header.p3);
-        //break;
+      //break;
       case consts.ZFIN:
         core._enqueue(ZModemHeader.fin());
         core._state = _ZFinState(core);
         return ZSessionFinishedEvent();
-      
+
       default:
         return super.handleHeader(header);
     }
@@ -397,10 +436,11 @@ class _ZWaitingContentState extends ZModemState {
         core._expectDataSubpacket();
         return ZDataEvent(header.p3, header.p2, header.p1, header.p0);
       case consts.ZEOF:
-        // Handle ZEOF here in the case of a 0 byte file size.
-        core._enqueue(ZModemHeader.rinit());
-        core._state = _ZRinitState(core);
-        return ZFileEndEvent();
+        // ZEOF for a 0-byte file (no ZDATA ever arrived). Do NOT auto-ACK:
+        // move to the awaiting-verdict state and let the consumer decide
+        // (ackFileEnd / abortSession). See _ZAwaitingVerdictState.
+        core._state = _ZAwaitingVerdictState(core);
+        return ZFileEndEvent(_eofPosition(header));
       default:
         return super.handleHeader(header);
     }
@@ -416,11 +456,13 @@ class _ZReceivingContentState extends ZModemState {
   ZModemEvent? handleHeader(ZModemHeader header) {
     switch (header.type) {
       case consts.ZEOF:
+        // The whole file has arrived on the wire. Do NOT reply ZRINIT yet:
+        // hand a ZFileEndEvent to the consumer and wait in
+        // _ZAwaitingVerdictState until it has flushed + verified the bytes
+        // on disk. Only then may it ackFileEnd() (ZRINIT) or abort (CAN).
+        core._state = _ZAwaitingVerdictState(core);
+        return ZFileEndEvent(_eofPosition(header));
 
-        core._enqueue(ZModemHeader.rinit());
-        core._state = _ZRinitState(core);
-        return ZFileEndEvent();
-      
       default:
         return super.handleHeader(header);
     }
@@ -428,16 +470,37 @@ class _ZReceivingContentState extends ZModemState {
 
   @override
   ZModemEvent? handleDataSubpacket(ZModemDataPacket packet) {
-    // If we got a ZCRCG or ZCRCQ here, expect another pone. This is because 
-    // we do not always get a ZDATA header with each frame, so need to expect 
+    // If we got a ZCRCG or ZCRCQ here, expect another pone. This is because
+    // we do not always get a ZDATA header with each frame, so need to expect
     // another subpacket.
-    if (packet.type == consts.ZCRCG || 
-        packet.type == consts.ZCRCQ) {
+    if (packet.type == consts.ZCRCG || packet.type == consts.ZCRCQ) {
       //print('Expecting subpacket ${packet.type}');
       core._expectDataSubpacket();
     }
-    
+
     return ZFileDataEvent(packet.data, packet);
+  }
+}
+
+/// A state entered on ZEOF, where the whole file has arrived on the wire but
+/// the consumer has not yet returned its verdict. The core deliberately holds
+/// here — it has sent nothing back — so the sender keeps the file until the
+/// consumer calls [ZModemCore.ackFileEnd] (durably stored -> ZRINIT) or
+/// [ZModemCore.abortSession] (bytes missing -> CAN, sender retains + re-offers).
+///
+/// A retransmitted ZEOF (the sender resends while waiting) is deduplicated by
+/// the base [ZModemState.handleHeader] (lastHeader == ZEOF -> null), so it does
+/// not produce a second [ZFileEndEvent]. ZRQINIT / ZFIN / unexpected headers
+/// fall through to the base handler unchanged.
+class _ZAwaitingVerdictState extends ZModemState {
+  _ZAwaitingVerdictState(super.core);
+
+  @override
+  ZModemEvent? handleDataSubpacket(ZModemDataPacket packet) {
+    // Ignore a trailing/duplicate data subpacket while we wait for the
+    // verdict rather than treating it as an unexpected packet (which would
+    // abort the session).
+    return null;
   }
 }
 
@@ -517,6 +580,14 @@ class _ZClosedState extends ZModemState {
         core._enqueue(ZModemOverAndOut());
         core._state = _ZFinState(core);
         return ZSessionFinishedEvent();
+      case consts.ZRQINIT:
+        // Our side of the session is complete (we sent ZFIN); if the
+        // sender's ZFIN reply was lost and it starts the NEXT session, honor
+        // it via the base restart handler (reply ZRINIT) instead of staying
+        // deaf. A deaf closed core would force the sender through a 7-10 s
+        // timeout + CAN spray per attempt, and the parser's CAN handling
+        // resets the zero-event watchdog, so the wedge could persist.
+        return super.handleHeader(header);
     }
     return null;
   }
