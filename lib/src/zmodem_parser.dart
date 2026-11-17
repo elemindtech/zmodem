@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:zmodem/src/buffer.dart';
 import 'package:zmodem/src/consts.dart' as consts;
+import 'package:zmodem/src/crc.dart';
 import 'package:zmodem/src/zmodem_frame.dart';
 
 class ZModemParser implements Iterator<ZModemPacket> {
@@ -282,14 +283,38 @@ class ZModemParser implements Iterator<ZModemPacket> {
 
   Iterable<ZModemPacket?> _parseDataSubpacket() sync* {
     final buffer = BytesBuilder();
+    // Raw ZPADs read in a row, just now, as file data.
+    var zpads = 0;
     //final headerParser = ZModemHeaderParser();
     while (true) {
+      if (zpads >= 2) {
+        final restart = _restartHeaderAhead();
+        if (restart == null) {
+          // Not enough bytes yet to tell.
+          yield null;
+          continue;
+        }
+        if (restart) {
+          // The sender has given this file up and is opening a new
+          // session. Drop the unfinished subpacket, report the end of
+          // the old session, then read the ZRQINIT as the header it is.
+          _buffer.expect(consts.ZDLE);
+          _buffer.expect(consts.ZHEX);
+          _endCancelRun();
+          yield ZModemSenderRestart();
+          yield* _parseHexHeader();
+          return;
+        }
+      }
+
+      final rawZpad = _buffer.isNotEmpty && _buffer.peek() == consts.ZPAD;
       final char = _buffer.readEscaped(abortSequence: _abortSequence);
 
       if (char == null) {
         yield null;
         continue;
       }
+      zpads = rawZpad ? zpads + 1 : 0;
 
       switch (char) {
         case consts.CANABORT:
@@ -321,6 +346,73 @@ class ZModemParser implements Iterator<ZModemPacket> {
           continue;
       }
     }
+  }
+}
+
+extension _RestartDetection on ZModemParser {
+  /// Called inside a data subpacket right after two raw ZPADs: is what
+  /// follows the rest of a ZRQINIT hex header (`ZDLE ZHEX`, fourteen hex
+  /// digits for type 0, four flag bytes and a matching CRC, and the line
+  /// end)?
+  ///
+  /// A sender that drops a file without its cancel reaching us (it was
+  /// reset, or it could not send the cancel) starts over with ZRQINIT.
+  /// Read as file data, that header and everything after it vanish into
+  /// the unfinished subpacket and the sender's offers go unanswered until
+  /// it times out. `ZPAD ZPAD ZDLE ZHEX` cannot be file data from the
+  /// headband: its senders escape only ZDLE, 0x10, 0x11, 0x13 (and those
+  /// with the top bit set), so a ZDLE in file data is never followed by
+  /// ZHEX. The digits and the CRC are checked all the same, so that data
+  /// from a sender that escapes every control character is not mistaken.
+  ///
+  /// Returns null while more bytes are needed to decide. It never waits
+  /// for bytes that file data would not also bring: the first byte that
+  /// does not fit answers false.
+  bool? _restartHeaderAhead() {
+    const digits = 14;
+    if (_buffer.isEmpty) return null;
+    if (_buffer.peek() != consts.ZDLE) return false;
+    if (_buffer.length < 2) return null;
+    if (_buffer.peek(1) != consts.ZHEX) return false;
+
+    final nibbles = <int>[];
+    for (var i = 0; i < digits; i++) {
+      if (_buffer.length < 3 + i) return null;
+      final char = _buffer.peek(2 + i);
+      if (char == null) return null;
+      final nibble = _hexValue(char);
+      if (nibble == null) return false;
+      nibbles.add(nibble);
+    }
+
+    final bytes = [
+      for (var i = 0; i < digits; i += 2) nibbles[i] * 16 + nibbles[i + 1],
+    ];
+    if (bytes[0] != consts.ZRQINIT) return false;
+    final crc = CRC16()
+      ..updateAll(bytes.sublist(0, 5))
+      ..finalize();
+    if (crc.value != (bytes[5] << 8 | bytes[6])) return false;
+
+    // The line end too (LF, or CR LF), so that the header parser, which
+    // throws on anything else there, is only ever handed a header it
+    // will accept: a restart is never reported and then lost.
+    var at = 2 + digits;
+    var end = _buffer.peek(at);
+    if (end == null) return null;
+    if (end == consts.CR || end == 0x8d) {
+      at++;
+      end = _buffer.peek(at);
+      if (end == null) return null;
+    }
+    return end == 0x0a || end == 0x8a;
+  }
+
+  static int? _hexValue(int char) {
+    if (char >= 0x30 && char <= 0x39) return char - 0x30;
+    if (char >= 0x41 && char <= 0x46) return char - 0x41 + 10;
+    if (char >= 0x61 && char <= 0x66) return char - 0x61 + 10;
+    return null;
   }
 }
 
