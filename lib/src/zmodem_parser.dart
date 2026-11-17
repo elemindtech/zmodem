@@ -93,7 +93,12 @@ class ZModemParser implements Iterator<ZModemPacket> {
     while (true) {
       //_buffer.printCurrentChunk();
       if (_expectDataSubpacket) {
-        _endCancelRun();
+        // Not _endCancelRun(): the CAN count is kept. A sender cut right
+        // after a subpacket's end marker puts the first four CANs of its
+        // cancel where the two CRC bytes belong; the fifth arrives here.
+        // Every byte that is not a CAN resets the count, so nothing
+        // older than the bytes just read can be carried in.
+        _inCancelRun = false;
         _expectDataSubpacket = false;
         yield* _parseDataSubpacket();
         continue;
@@ -278,12 +283,19 @@ class ZModemParser implements Iterator<ZModemPacket> {
         case consts.ZCRCG | consts.ZDLEESC:
         case consts.ZCRCQ | consts.ZDLEESC:
         case consts.ZCRCW | consts.ZDLEESC:
-          // We get these at the end of a subpacket/frame.
+          // We get these at the end of a subpacket/frame. CANs read as
+          // CRC bytes count towards a cancel like any others.
           while (!_buffer.hasEscaped) yield null;
-          final crc0 = _buffer.readEscaped();
+          final crc0 = _buffer.readEscaped(abortSequence: _abortSequence);
 
           while (!_buffer.hasEscaped) yield null;
-          final crc1 = _buffer.readEscaped();
+          final crc1 = _buffer.readEscaped(abortSequence: _abortSequence);
+
+          if (crc0 == consts.CANABORT || crc1 == consts.CANABORT) {
+            _inCancelRun = true;
+            yield ZModemAbortSequence();
+            return;
+          }
 
           final type = char ^ consts.ZDLEESC;
           final payload = buffer.takeBytes();
