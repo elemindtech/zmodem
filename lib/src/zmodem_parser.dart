@@ -181,9 +181,24 @@ class ZModemParser implements Iterator<ZModemPacket> {
     const asciiFields = 1 + 4 + 2;
     const headerLength = asciiFields * 2;
     //print('Parse header ${_buffer.length}, $headerLength');
-    // Hex header has fixed length, so we can check the length before reading.
-    while (_buffer.length < headerLength) {
-      yield null;
+    // A sender that cancels in the middle of a header follows the digits
+    // it got out with CANs. The digits are looked at one by one as they
+    // arrive, and the header is given up at the first CAN, which is left
+    // for the caller: the cancel is counted now. Waiting for all fourteen
+    // bytes held the cancel back until the next session's bytes arrived,
+    // and decoding the CAN as a digit then threw, which ends this
+    // generator for good (the parser never produced another packet).
+    // Any other byte that is not a digit still throws below, as before.
+    for (var i = 0; i < headerLength; i++) {
+      while (_buffer.length <= i) {
+        yield null;
+      }
+      if (_buffer.peek(i) == consts.CAN) {
+        for (var j = 0; j < i; j++) {
+          _buffer.readByte();
+        }
+        return;
+      }
     }
 
     final frameType = _buffer.readAsciiByte();
@@ -216,7 +231,10 @@ class ZModemParser implements Iterator<ZModemPacket> {
     // _buffer.expect(consts.LF);
     next = _buffer.peek();
 
-    if(next != 0x8a && next != 0x0a) {
+    if (next == consts.CAN) {
+      // Cancelled before the line end. All fourteen digits are in, so the
+      // header stands; the CANs are left for the caller to count.
+    } else if(next != 0x8a && next != 0x0a) {
       _buffer.expect(0x8a);
     } else {
       _buffer.readByte();
@@ -289,13 +307,9 @@ class ZModemParser implements Iterator<ZModemPacket> {
           final crc0 = _buffer.readEscaped(abortSequence: _abortSequence);
 
           while (!_buffer.hasEscaped) yield null;
+          // (Neither read can complete a cancel: the end marker reset the
+          // count and two reads raise it to four at most.)
           final crc1 = _buffer.readEscaped(abortSequence: _abortSequence);
-
-          if (crc0 == consts.CANABORT || crc1 == consts.CANABORT) {
-            _inCancelRun = true;
-            yield ZModemAbortSequence();
-            return;
-          }
 
           final type = char ^ consts.ZDLEESC;
           final payload = buffer.takeBytes();
