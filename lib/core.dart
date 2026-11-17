@@ -78,6 +78,13 @@ class ZModemCore {
           yield event;
         }
       } else if (packet is ZModemAbortSequence) {
+        // The peer cancelled: whatever this session was doing is over.
+        // Park in the init state HERE, as the cancel is parsed, not later
+        // when the consumer gets round to the event. Bytes that follow in
+        // the same delivery (the sender's next ZRQINIT) must be read from
+        // the init state; a reset applied after them throws the new
+        // session's handshake away and its ZFILE is then refused.
+        _state = _ZInitState(this);
         yield ZSessionCancelEvent();
       }
     }

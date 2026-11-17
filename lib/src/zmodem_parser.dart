@@ -10,6 +10,18 @@ class ZModemParser implements Iterator<ZModemPacket> {
   final _buffer = ChunkBuffer();
   final _abortSequence = ZModemAbortSequence();
 
+  /// True from the moment a cancel is recognised until the first byte that
+  /// is not a CAN. The rest of that run belongs to the same cancel and is
+  /// dropped: released firmware sends 8, 10 or 16 CANs for one failed send,
+  /// and counting the surplus towards a second cancel would aim it at the
+  /// next session.
+  var _inCancelRun = false;
+
+  void _endCancelRun() {
+    _inCancelRun = false;
+    _abortSequence.reset();
+  }
+
   late final Iterator<ZModemPacket?> _parser = _createParser().iterator;
 
   void Function(int)? onPlainText;
@@ -81,21 +93,33 @@ class ZModemParser implements Iterator<ZModemPacket> {
     while (true) {
       //_buffer.printCurrentChunk();
       if (_expectDataSubpacket) {
-        _abortSequence.reset();
+        _endCancelRun();
         _expectDataSubpacket = false;
         yield* _parseDataSubpacket();
         continue;
       }
 
-      while (_buffer.length < 4) {
+      while (_buffer.isEmpty) {
         yield null;
       }
-      
+
+      // Only a frame start needs look-ahead: four bytes tell a hex or a
+      // binary header from stray text. Every other byte is acted on as it
+      // arrives. Waiting for four bytes regardless of what they were held
+      // back the last three bytes of whatever came last. When that was the
+      // peer's cancel (five CANs, or the tail of ten or sixteen), the
+      // cancel was only recognised once the NEXT session's first bytes
+      // arrived, and it cancelled that session instead.
       //42, 42, 24, 88, 66, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 13,
       if (_buffer.peek() == consts.ZPAD) {
+        while (_buffer.length < 4) {
+          yield null;
+        }
+
         if (_buffer.peek(1) == consts.ZPAD &&
             _buffer.peek(2) == consts.ZDLE &&
             _buffer.peek(3) == consts.ZHEX) {
+          _endCancelRun();
           _buffer.expect(consts.ZPAD);
           _buffer.expect(consts.ZPAD);
           _buffer.expect(consts.ZDLE);
@@ -105,6 +129,7 @@ class ZModemParser implements Iterator<ZModemPacket> {
         }
 
         if (_buffer.peek(1) == consts.ZDLE && _buffer.peek(2) == consts.ZBIN) {
+          _endCancelRun();
           _buffer.expect(consts.ZPAD);
           _buffer.expect(consts.ZDLE);
           _buffer.expect(consts.ZBIN);
@@ -114,14 +139,19 @@ class ZModemParser implements Iterator<ZModemPacket> {
       }
       final byte = _buffer.readByte();
       if(byte == consts.CAN) {
+        if (_inCancelRun) {
+          // The tail of a cancel that has already been reported.
+          continue;
+        }
         if(_abortSequence.aborted(byte)) {
+          _inCancelRun = true;
           yield ZModemAbortSequence();
           continue;
         } else {
           continue;
         }
       } else {
-        _abortSequence.reset();
+        _endCancelRun();
         _handleDirtyChar(byte);
       }
 
@@ -240,6 +270,8 @@ class ZModemParser implements Iterator<ZModemPacket> {
 
       switch (char) {
         case consts.CANABORT:
+          // Whatever CANs follow are the tail of this cancel.
+          _inCancelRun = true;
           yield ZModemAbortSequence();
           return;
         case consts.ZCRCE | consts.ZDLEESC:
@@ -297,10 +329,20 @@ extension _ChunkBufferExtensions on ChunkBuffer {
     }
 
     if (peek() != consts.ZDLE) {
+      // A cancel is five CONSECUTIVE CANs: any other byte ends the count.
+      abortSequence?.reset();
       return readByte();
     }
 
     if (length < 2) {
+      // A ZDLE needs the byte after it, with one exception: the fifth CAN
+      // of a cancel. The sender has stopped, so nothing may follow it until
+      // the next session starts; it is acted on now, not then.
+      if (abortSequence != null && abortSequence.oneShortOfAbort) {
+        expect(consts.ZDLE);
+        abortSequence.aborted(consts.ZDLE);
+        return consts.CANABORT;
+      }
       return null;
     }
 

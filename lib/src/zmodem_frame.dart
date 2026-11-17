@@ -319,6 +319,9 @@ class ZModemAbortSequence implements ZModemPacket {
     return false;
   }
 
+  /// True when the next CAN completes the abort sequence.
+  bool get oneShortOfAbort => canCount == abortSequence.length - 1;
+
   void reset() {
     canCount = 0;
   }
