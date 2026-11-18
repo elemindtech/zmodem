@@ -10,6 +10,18 @@ class ZModemParser implements Iterator<ZModemPacket> {
   final _buffer = ChunkBuffer();
   final _abortSequence = ZModemAbortSequence();
 
+  /// True from the moment a cancel is recognised until the first byte that
+  /// is not a CAN. The rest of that run belongs to the same cancel and is
+  /// dropped: released firmware sends 8, 10 or 16 CANs for one failed send,
+  /// and counting the surplus towards a second cancel would aim it at the
+  /// next session.
+  var _inCancelRun = false;
+
+  void _endCancelRun() {
+    _inCancelRun = false;
+    _abortSequence.reset();
+  }
+
   late final Iterator<ZModemPacket?> _parser = _createParser().iterator;
 
   void Function(int)? onPlainText;
@@ -81,21 +93,38 @@ class ZModemParser implements Iterator<ZModemPacket> {
     while (true) {
       //_buffer.printCurrentChunk();
       if (_expectDataSubpacket) {
-        _abortSequence.reset();
+        // Not _endCancelRun(): the CAN count is kept. A sender cut right
+        // after a subpacket's end marker puts the first four CANs of its
+        // cancel where the two CRC bytes belong; the fifth arrives here.
+        // Every byte that is not a CAN resets the count, so nothing
+        // older than the bytes just read can be carried in.
+        _inCancelRun = false;
         _expectDataSubpacket = false;
         yield* _parseDataSubpacket();
         continue;
       }
 
-      while (_buffer.length < 4) {
+      while (_buffer.isEmpty) {
         yield null;
       }
-      
+
+      // Only a frame start needs look-ahead: four bytes tell a hex or a
+      // binary header from stray text. Every other byte is acted on as it
+      // arrives. Waiting for four bytes regardless of what they were held
+      // back the last three bytes of whatever came last. When that was the
+      // peer's cancel (five CANs, or the tail of ten or sixteen), the
+      // cancel was only recognised once the NEXT session's first bytes
+      // arrived, and it cancelled that session instead.
       //42, 42, 24, 88, 66, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 13,
       if (_buffer.peek() == consts.ZPAD) {
+        while (_buffer.length < 4) {
+          yield null;
+        }
+
         if (_buffer.peek(1) == consts.ZPAD &&
             _buffer.peek(2) == consts.ZDLE &&
             _buffer.peek(3) == consts.ZHEX) {
+          _endCancelRun();
           _buffer.expect(consts.ZPAD);
           _buffer.expect(consts.ZPAD);
           _buffer.expect(consts.ZDLE);
@@ -105,6 +134,7 @@ class ZModemParser implements Iterator<ZModemPacket> {
         }
 
         if (_buffer.peek(1) == consts.ZDLE && _buffer.peek(2) == consts.ZBIN) {
+          _endCancelRun();
           _buffer.expect(consts.ZPAD);
           _buffer.expect(consts.ZDLE);
           _buffer.expect(consts.ZBIN);
@@ -114,14 +144,19 @@ class ZModemParser implements Iterator<ZModemPacket> {
       }
       final byte = _buffer.readByte();
       if(byte == consts.CAN) {
+        if (_inCancelRun) {
+          // The tail of a cancel that has already been reported.
+          continue;
+        }
         if(_abortSequence.aborted(byte)) {
+          _inCancelRun = true;
           yield ZModemAbortSequence();
           continue;
         } else {
           continue;
         }
       } else {
-        _abortSequence.reset();
+        _endCancelRun();
         _handleDirtyChar(byte);
       }
 
@@ -146,9 +181,24 @@ class ZModemParser implements Iterator<ZModemPacket> {
     const asciiFields = 1 + 4 + 2;
     const headerLength = asciiFields * 2;
     //print('Parse header ${_buffer.length}, $headerLength');
-    // Hex header has fixed length, so we can check the length before reading.
-    while (_buffer.length < headerLength) {
-      yield null;
+    // A sender that cancels in the middle of a header follows the digits
+    // it got out with CANs. The digits are looked at one by one as they
+    // arrive, and the header is given up at the first CAN, which is left
+    // for the caller: the cancel is counted now. Waiting for all fourteen
+    // bytes held the cancel back until the next session's bytes arrived,
+    // and decoding the CAN as a digit then threw, which ends this
+    // generator for good (the parser never produced another packet).
+    // Any other byte that is not a digit still throws below, as before.
+    for (var i = 0; i < headerLength; i++) {
+      while (_buffer.length <= i) {
+        yield null;
+      }
+      if (_buffer.peek(i) == consts.CAN) {
+        for (var j = 0; j < i; j++) {
+          _buffer.readByte();
+        }
+        return;
+      }
     }
 
     final frameType = _buffer.readAsciiByte();
@@ -181,7 +231,10 @@ class ZModemParser implements Iterator<ZModemPacket> {
     // _buffer.expect(consts.LF);
     next = _buffer.peek();
 
-    if(next != 0x8a && next != 0x0a) {
+    if (next == consts.CAN) {
+      // Cancelled before the line end. All fourteen digits are in, so the
+      // header stands; the CANs are left for the caller to count.
+    } else if(next != 0x8a && next != 0x0a) {
       _buffer.expect(0x8a);
     } else {
       _buffer.readByte();
@@ -240,18 +293,23 @@ class ZModemParser implements Iterator<ZModemPacket> {
 
       switch (char) {
         case consts.CANABORT:
+          // Whatever CANs follow are the tail of this cancel.
+          _inCancelRun = true;
           yield ZModemAbortSequence();
           return;
         case consts.ZCRCE | consts.ZDLEESC:
         case consts.ZCRCG | consts.ZDLEESC:
         case consts.ZCRCQ | consts.ZDLEESC:
         case consts.ZCRCW | consts.ZDLEESC:
-          // We get these at the end of a subpacket/frame.
+          // We get these at the end of a subpacket/frame. CANs read as
+          // CRC bytes count towards a cancel like any others.
           while (!_buffer.hasEscaped) yield null;
-          final crc0 = _buffer.readEscaped();
+          final crc0 = _buffer.readEscaped(abortSequence: _abortSequence);
 
           while (!_buffer.hasEscaped) yield null;
-          final crc1 = _buffer.readEscaped();
+          // (Neither read can complete a cancel: the end marker reset the
+          // count and two reads raise it to four at most.)
+          final crc1 = _buffer.readEscaped(abortSequence: _abortSequence);
 
           final type = char ^ consts.ZDLEESC;
           final payload = buffer.takeBytes();
@@ -297,10 +355,20 @@ extension _ChunkBufferExtensions on ChunkBuffer {
     }
 
     if (peek() != consts.ZDLE) {
+      // A cancel is five CONSECUTIVE CANs: any other byte ends the count.
+      abortSequence?.reset();
       return readByte();
     }
 
     if (length < 2) {
+      // A ZDLE needs the byte after it, with one exception: the fifth CAN
+      // of a cancel. The sender has stopped, so nothing may follow it until
+      // the next session starts; it is acted on now, not then.
+      if (abortSequence != null && abortSequence.oneShortOfAbort) {
+        expect(consts.ZDLE);
+        abortSequence.aborted(consts.ZDLE);
+        return consts.CANABORT;
+      }
       return null;
     }
 
