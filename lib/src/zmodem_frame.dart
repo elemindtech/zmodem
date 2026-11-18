@@ -327,6 +327,15 @@ class ZModemAbortSequence implements ZModemPacket {
   }
 }
 
+/// The sender started a new session (ZRQINIT) where the data of the file
+/// being received was expected: it has given that file up without a
+/// cancel reaching us. Handled exactly like a cancel; a type of its own so
+/// a trace shows which of the two it was.
+class ZModemSenderRestart extends ZModemAbortSequence {
+  @override
+  String toString() => 'ZModemSenderRestart';
+}
+
 class ZModemOverAndOut implements ZModemPacket {
   const ZModemOverAndOut();
 
